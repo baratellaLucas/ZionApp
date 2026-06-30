@@ -59,7 +59,8 @@ const MembrosModule = ({ user, setUser, showNotification }) => {
   };
 
   const futureEvents = events.filter(e => new Date(e.date) >= new Date());
-  const generalAnnouncement = announcements.length > 0 ? announcements[0] : null;
+  // Só comunicados do tipo GERAL aparecem aqui (Início/Membros)
+  const generalAnnouncement = announcements.filter(a => a.type === 'GERAL')[0] || null;
 
   return (
     <div className="space-y-6">

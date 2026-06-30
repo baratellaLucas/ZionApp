@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
-import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Key, Briefcase } from 'lucide-react';
+import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Users, Eye, Briefcase } from 'lucide-react';
 
-const AdminModule = ({ user, showNotification }) => {
+const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   const [activeTab, setActiveTab] = useState('links');
   
   const [allUsers, setAllUsers] = useState([]);
@@ -238,7 +238,7 @@ const AdminModule = ({ user, showNotification }) => {
         <button onClick={() => setActiveTab('eventos')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none ${activeTab === 'eventos' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Calendar className="w-4 h-4"/> Eventos</button>
         <button onClick={() => setActiveTab('comunicados')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none ${activeTab === 'comunicados' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Megaphone className="w-4 h-4"/> Comunicados</button>
         <button onClick={() => setActiveTab('mural_geral')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none ${activeTab === 'mural_geral' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><MessageSquare className="w-4 h-4"/> Mural Geral</button>
-        <button onClick={() => setActiveTab('acessos')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none ${activeTab === 'acessos' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Key className="w-4 h-4"/> Acessos</button>
+        <button onClick={() => setActiveTab('membros')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none ${activeTab === 'membros' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Users className="w-4 h-4"/> Membros</button>
       </div>
 
       {isLoading ? (
@@ -486,22 +486,35 @@ const AdminModule = ({ user, showNotification }) => {
             </div>
           )}
 
-          {/* ─── ACESSOS E PERMISSÕES ─── */}
-          {activeTab === 'acessos' && (
+          {/* ─── MEMBROS (ACESSOS + MODO TESTE) ─── */}
+          {activeTab === 'membros' && (
             <div className="space-y-4">
-               <h3 className="text-lg font-bold text-text-primary">Gerenciamento de Acessos</h3>
-               <p className="text-sm text-text-muted mb-4">Promova usuários a Líderes e Administradores.</p>
-               
+               <h3 className="text-lg font-bold text-text-primary">Membros Cadastrados</h3>
+               <p className="text-sm text-text-muted mb-4">Defina o nível de acesso de cada membro ou entre no <span className="font-semibold text-amber-400">Modo de Teste</span> para navegar na visão dele.</p>
+
                <div className="grid gap-3">
                  {allUsers.map(usr => (
                    <div key={usr.id} className="bg-surface-card border border-white/5 p-4 rounded-default flex flex-col sm:flex-row justify-between sm:items-center gap-4">
-                     <div>
-                       <div className="font-bold text-white text-sm">{usr.name}</div>
-                       <div className="text-xs text-text-muted">{usr.email}</div>
+                     <div className="flex items-center gap-3">
+                       <div className="w-10 h-10 rounded-full bg-surface-dark border border-white/10 flex items-center justify-center font-bold text-brand-primary overflow-hidden shrink-0">
+                         {usr.profileImage ? <img src={usr.profileImage} alt={usr.name} className="w-full h-full object-cover" /> : (usr.name?.charAt(0) || '?')}
+                       </div>
+                       <div>
+                         <div className="font-bold text-white text-sm">{usr.name}</div>
+                         <div className="text-xs text-text-muted">{usr.email}</div>
+                       </div>
                      </div>
-                     <div className="flex flex-col sm:items-end gap-2">
-                       <select 
-                         value={usr.role} 
+                     <div className="flex items-center gap-2 sm:justify-end">
+                       <button
+                         onClick={() => handleSimulateUser?.(usr)}
+                         disabled={usr.id === user.id}
+                         title={usr.id === user.id ? 'Você não pode simular a si mesmo' : `Testar como ${usr.name}`}
+                         className="flex items-center gap-1.5 text-xs font-bold text-amber-400 bg-amber-500/10 border border-amber-500/30 px-3 py-1.5 rounded-md hover:bg-amber-500/20 transition-colors outline-none disabled:opacity-40 disabled:cursor-not-allowed"
+                       >
+                         <Eye className="w-3.5 h-3.5"/> Testar
+                       </button>
+                       <select
+                         value={usr.role}
                          disabled={usr.id === user.id} // Impede alterar o próprio acesso
                          onChange={(e) => handleRoleChange(usr.id, e.target.value)}
                          className={`bg-surface-dark border rounded-md px-3 py-1.5 text-xs font-bold outline-none disabled:opacity-50 ${usr.role === 'ADMIN' ? 'text-red-400 border-red-500/30' : usr.role === 'LIDER' ? 'text-brand-primary border-brand-primary/30' : 'text-text-muted border-white/10'}`}

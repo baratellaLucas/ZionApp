@@ -5,21 +5,24 @@ import {
   Award, Gift, X, Save, BookOpen, Trash2, AlertTriangle
 } from 'lucide-react';
 
-// Mapa de ícones disponíveis (string → componente) para itens vindos do mock/backend
-const ICON_MAP = { Coffee, Smile, Music, Briefcase, BookOpen, Users, Award };
+const API_BASE = 'http://localhost:3000';
 
-const MOCK_AREAS = [
-  { id: 'a1', name: 'Keola Coffee', iconName: 'Coffee', color: 'text-amber-500', bg: 'bg-amber-500/10', description: 'Servir com excelência através do café.' },
-  { id: 'a2', name: 'Recepção',     iconName: 'Smile',  color: 'text-emerald-500', bg: 'bg-emerald-500/10', description: 'O primeiro sorriso que as pessoas veem.' },
-  { id: 'a3', name: 'HouseMix',     iconName: 'Music',  color: 'text-purple-500',  bg: 'bg-purple-500/10',  description: 'Áudio, vídeo e iluminação dos cultos.' },
+// As áreas vêm do backend sem ícone/cor; aplicamos uma paleta visual por índice.
+const AREA_STYLES = [
+  { Icon: Coffee, color: 'text-amber-500',   bg: 'bg-amber-500/10' },
+  { Icon: Smile,  color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+  { Icon: Music,  color: 'text-purple-500',  bg: 'bg-purple-500/10' },
+  { Icon: Users,  color: 'text-blue-500',    bg: 'bg-blue-500/10' },
 ];
+const DEFAULT_AREA_STYLE = { Icon: Briefcase, color: 'text-brand-primary', bg: 'bg-brand-primary/10' };
 
 const MAX_AREAS_PER_PERSON = 2;
 
 const VoluntariosModule = ({ user, setUser, showNotification }) => {
   const [activeTab,        setActiveTab]        = useState('minhas_areas');
-  // myAreas guarda APENAS as participações do utilizador (status PENDENTE ou APROVADO)
-  // Começa vazio — é populado pela lógica de solicitar/cancelar (mock local por agora)
+  // areas: catálogo vindo do backend (GET /api/areas)
+  const [areas,            setAreas]            = useState([]);
+  // myAreas: participações do utilizador (status PENDENTE ou APROVADO), vindas do backend
   const [myAreas,          setMyAreas]          = useState([]);
   const [selectedAreaId,   setSelectedAreaId]   = useState(null);
   const [modalTab,         setModalTab]         = useState('escalas');
@@ -28,15 +31,24 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
   const [areaToCancel,     setAreaToCancel]     = useState(null); // controla modal de confirmação interno
 
   const [shifts,           setShifts]           = useState([]);
+  const [announcements,    setAnnouncements]    = useState([]);
   const [isLoading,        setIsLoading]        = useState(true);
 
-  // ─── fetch de escalas do usuário logado ──────────────────────────────────
+  // ─── fetch de áreas, participações, escalas e comunicados ─────────────────
   useEffect(() => {
     const fetchData = async () => {
       try {
         const query = user?.id ? `?userId=${user.id}` : '';
-        const res   = await fetch(`http://localhost:3000/api/shifts${query}`).catch(() => null);
-        if (res && res.ok) setShifts(await res.json());
+        const [resAreas, resMine, resShifts, resAnn] = await Promise.all([
+          fetch(`${API_BASE}/api/areas`).catch(() => null),
+          user?.id ? fetch(`${API_BASE}/api/areas/my-participations?userId=${user.id}`).catch(() => null) : null,
+          fetch(`${API_BASE}/api/shifts${query}`).catch(() => null),
+          fetch(`${API_BASE}/api/announcements?type=VOLUNTARIO`).catch(() => null),
+        ]);
+        if (resAreas && resAreas.ok) setAreas(await resAreas.json());
+        if (resMine && resMine.ok) setMyAreas(await resMine.json());
+        if (resShifts && resShifts.ok) setShifts(await resShifts.json());
+        if (resAnn && resAnn.ok) setAnnouncements(await resAnn.json());
       } catch (e) {
         console.error(e);
       } finally {
@@ -46,9 +58,19 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
     fetchData();
   }, [user?.id]);
 
+  // Só comunicados do tipo VOLUNTARIO aparecem aqui
+  const volAnnouncement = announcements.filter(a => a.type === 'VOLUNTARIO')[0] || null;
+
   // ─── derived ─────────────────────────────────────────────────────────────
-  const activeAreaDetails = selectedAreaId ? MOCK_AREAS.find(a => a.id === selectedAreaId) : null;
-  const AreaIcon          = activeAreaDetails ? (ICON_MAP[activeAreaDetails.iconName] || Briefcase) : Coffee;
+  // Estilo (ícone/cor) de uma área pelo seu índice no catálogo; fallback padrão.
+  const styleForAreaId = (areaId) => {
+    const idx = areas.findIndex(a => a.id === areaId);
+    return idx === -1 ? DEFAULT_AREA_STYLE : AREA_STYLES[idx % AREA_STYLES.length];
+  };
+
+  const activeAreaDetails = selectedAreaId ? areas.find(a => a.id === selectedAreaId) : null;
+  const activeAreaStyle   = activeAreaDetails ? styleForAreaId(activeAreaDetails.id) : DEFAULT_AREA_STYLE;
+  const AreaIcon          = activeAreaStyle.Icon;
 
   const activeAreaCount   = myAreas.filter(p => p.status === 'PENDENTE' || p.status === 'APROVADO').length;
   const reachedAreaLimit  = activeAreaCount >= MAX_AREAS_PER_PERSON;
@@ -86,8 +108,9 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
     }
   };
 
-  // FIX: solicitar entrada adiciona como PENDENTE, não APROVADO
-  const handleRequestArea = (areaId) => {
+  // Solicitar entrada (PENDENTE) — persiste via POST /api/areas/:id/request
+  const handleRequestArea = async (areaId) => {
+    if (!user?.id) return;
     if (myAreas.some(p => p.areaId === areaId)) {
       showNotification('Você já tem uma solicitação ativa para esta área.');
       return;
@@ -96,19 +119,41 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
       showNotification(`Limite de ${MAX_AREAS_PER_PERSON} áreas atingido.`);
       return;
     }
-    setMyAreas(prev => [...prev, { id: Date.now().toString(), areaId, status: 'PENDENTE', role: 'Aguardando Avaliação' }]);
-    showNotification('Solicitação enviada! Aguarde a aprovação do líder.');
+    const area = areas.find(a => a.id === areaId);
+    const tempId = `tmp-${areaId}`; // único por área (1 participação por área)
+    // Otimista: mostra como pendente imediatamente
+    setMyAreas(prev => [...prev, { id: tempId, areaId, status: 'PENDENTE', role: 'Aguardando Avaliação', area }]);
+    try {
+      const res = await fetch(`${API_BASE}/api/areas/${areaId}/request`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user.id })
+      });
+      if (res.ok) {
+        const saved = await res.json();
+        setMyAreas(prev => prev.map(p => p.id === tempId ? { ...p, id: saved.id, status: saved.status } : p));
+        showNotification('Solicitação enviada! Aguarde a aprovação do líder.');
+      } else throw new Error('offline');
+    } catch {
+      showNotification('Solicitação registada localmente (Offline).');
+    }
   };
 
   // Abre modal de confirmação interno (sem window.confirm)
   const requestCancelArea = (participation) => setAreaToCancel(participation);
 
-  // FIX: handleCancelAreaRequest declarado e funcional
-  const executeCancelArea = () => {
+  // Cancelar/sair — persiste via DELETE /api/areas/:id/request
+  const executeCancelArea = async () => {
     if (!areaToCancel) return;
-    setMyAreas(prev => prev.filter(p => p.id !== areaToCancel.id));
+    const participation = areaToCancel;
     setAreaToCancel(null);
-    showNotification('Solicitação cancelada.');
+    setMyAreas(prev => prev.filter(p => p.id !== participation.id));
+    try {
+      await fetch(`${API_BASE}/api/areas/${participation.areaId}/request`, {
+        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user?.id })
+      });
+      showNotification('Solicitação cancelada.');
+    } catch {
+      showNotification('Solicitação cancelada (Offline).');
+    }
   };
 
   const openAreaModal = (areaId) => {
@@ -138,16 +183,21 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
             {reachedAreaLimit && <span className="text-xs font-semibold whitespace-nowrap">Limite atingido</span>}
           </div>
 
+          {isLoading ? (
+            <div className="flex justify-center py-10"><div className="w-8 h-8 border-4 border-brand-primary border-t-transparent rounded-full animate-spin"></div></div>
+          ) : areas.length === 0 ? (
+            <div className="text-center text-text-muted py-10 bg-surface-card rounded-default border border-dashed border-white/10">Nenhuma área cadastrada ainda. Peça ao Admin para criar áreas de voluntariado.</div>
+          ) : (
           <div className="grid gap-4 md:grid-cols-2">
-            {MOCK_AREAS.map(area => {
-              const Icon            = ICON_MAP[area.iconName] || Briefcase;
+            {areas.map(area => {
+              const { Icon, color, bg } = styleForAreaId(area.id);
               const myParticipation = myAreas.find(m => m.areaId === area.id);
               const disableRequest  = reachedAreaLimit && !myParticipation;
               return (
                 <div key={area.id} className="bg-surface-card p-5 rounded-default border border-white/5 shadow-level-2 flex flex-col justify-between">
                   <div>
                     <div className="flex items-center gap-3 mb-3">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${area.bg} ${area.color}`}><Icon className="w-5 h-5"/></div>
+                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${bg} ${color}`}><Icon className="w-5 h-5"/></div>
                       <h3 className="font-display font-bold text-lg text-text-primary">{area.name}</h3>
                     </div>
                     <p className="text-sm text-text-muted mb-4">{area.description}</p>
@@ -181,35 +231,38 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
               );
             })}
           </div>
+          )}
         </div>
       )}
 
       {/* ── ABA: MINHAS ÁREAS ─────────────────────────────────────────────── */}
       {activeTab === 'minhas_areas' && (
         <div className="space-y-4 animate-in fade-in duration-300">
-          <div className="bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 p-4 rounded-default shadow-sm">
-            <div className="flex items-start gap-3">
-              <div className="bg-blue-500/20 p-2 rounded-full text-blue-400 mt-1 shrink-0"><Megaphone className="w-5 h-5"/></div>
-              <div>
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">Comunicado Geral <span className="bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-sm uppercase tracking-wider font-bold">Importante</span></h3>
-                <p className="text-xs text-text-muted mt-1 leading-relaxed">Atenção todos os voluntários: O alinhamento geral deste mês será no próximo Sábado às 16h. A presença de todos é fundamental para as novas diretrizes!</p>
+          {volAnnouncement && (
+            <div className="bg-gradient-to-r from-blue-600/20 to-purple-600/20 border border-blue-500/30 p-4 rounded-default shadow-sm">
+              <div className="flex items-start gap-3">
+                <div className="bg-blue-500/20 p-2 rounded-full text-blue-400 mt-1 shrink-0"><Megaphone className="w-5 h-5"/></div>
+                <div>
+                  <h3 className="text-sm font-bold text-white flex items-center gap-2">{volAnnouncement.title} <span className="bg-red-500 text-white text-[9px] px-1.5 py-0.5 rounded-sm uppercase tracking-wider font-bold">Voluntários</span></h3>
+                  <p className="text-xs text-text-muted mt-1 leading-relaxed">{volAnnouncement.content}</p>
+                </div>
               </div>
             </div>
-          </div>
+          )}
 
           {myAreas.length === 0 ? (
             <div className="text-center text-text-muted py-10 bg-surface-card rounded-default border border-dashed border-white/10">Você ainda não faz parte de nenhuma área. Explore as opções!</div>
           ) : (
             <div className="space-y-3">
               {myAreas.map((myArea) => {
-                const areaDetails = MOCK_AREAS.find(a => a.id === myArea.areaId);
+                const areaDetails = myArea.area || areas.find(a => a.id === myArea.areaId);
                 if (!areaDetails) return null;
-                const Icon       = ICON_MAP[areaDetails.iconName] || Briefcase;
+                const { Icon, color, bg } = styleForAreaId(myArea.areaId);
                 const isApproved = myArea.status === 'APROVADO';
                 return (
                   <div key={myArea.id} className={`bg-surface-card p-4 rounded-default border transition-all flex flex-col sm:flex-row justify-between items-center gap-4 shadow-level-2 ${isApproved ? 'border-brand-primary/30' : 'border-white/5'}`}>
                     <div className="flex items-center gap-4 w-full sm:w-auto">
-                      <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${areaDetails.bg} ${areaDetails.color}`}><Icon className="w-6 h-6"/></div>
+                      <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${bg} ${color}`}><Icon className="w-6 h-6"/></div>
                       <div>
                         <h3 className="font-display font-bold text-lg text-text-primary">{areaDetails.name}</h3>
                         <div className="text-sm text-text-muted font-medium flex items-center gap-1 mt-0.5">
@@ -254,7 +307,7 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
             <div className="p-6 border-b border-white/10 bg-surface-dark shrink-0">
               <div className="flex justify-between items-start">
                 <div className="flex items-center gap-4">
-                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${activeAreaDetails.bg} ${activeAreaDetails.color}`}>
+                  <div className={`w-12 h-12 rounded-full flex items-center justify-center ${activeAreaStyle.bg} ${activeAreaStyle.color}`}>
                     <AreaIcon className="w-6 h-6"/>
                   </div>
                   <div>

@@ -3,11 +3,11 @@ import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
 
 const app = express();
-const port = 3000;
+const port = Number(process.env.PORT) || 3000;
 const prisma = new PrismaClient();
 
 app.use(cors());
-app.use(express.json({ limit: '10mb' })); 
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 
 const MAX_LINKS_PER_PERSON = 2;
@@ -64,7 +64,7 @@ app.put('/api/events/:id', async (req, res) => res.json(await prisma.event.updat
 app.delete('/api/events/:id', async (req, res) => { await prisma.event.delete({ where: { id: req.params.id } }); res.json({ message: "Deletado" }); });
 
 // --- COMUNICADOS ---
-app.get('/api/announcements', async (req, res) => res.json(await prisma.announcement.findMany({ orderBy: { createdAt: 'desc' } })));
+app.get('/api/announcements', async (req, res) => res.json(await prisma.announcement.findMany({ where: req.query.type ? { type: String(req.query.type) } : undefined, orderBy: { createdAt: 'desc' } })));
 app.post('/api/announcements', async (req, res) => res.status(201).json(await prisma.announcement.create({ data: req.body })));
 app.put('/api/announcements/:id', async (req, res) => res.json(await prisma.announcement.update({ where: { id: req.params.id }, data: req.body })));
 app.delete('/api/announcements/:id', async (req, res) => { await prisma.announcement.delete({ where: { id: req.params.id } }); res.json({ message: "Deletado" }); });
@@ -81,8 +81,27 @@ app.patch('/api/areas/:id/leader', async (req, res) => res.json(await prisma.are
 
 // Participações e Escalas
 app.get('/api/areas/my-participations', async (req, res) => res.json(await prisma.areaParticipation.findMany({ where: { userId: String(req.query.userId) }, include: { area: { include: { leader: true } } } })));
-app.post('/api/areas/:id/request', async (req, res) => res.status(201).json(await prisma.areaParticipation.create({ data: { userId: req.body.userId, areaId: req.params.id, status: 'PENDENTE' } })));
+app.post('/api/areas/:id/request', async (req, res) => {
+  try {
+    res.status(201).json(await prisma.areaParticipation.create({ data: { userId: req.body.userId, areaId: req.params.id, status: 'PENDENTE' } }));
+  } catch (e) { res.status(409).json({ error: 'Você já solicitou participação nesta área.' }); }
+});
 app.delete('/api/areas/:id/request', async (req, res) => { await prisma.areaParticipation.deleteMany({ where: { userId: req.body.userId, areaId: req.params.id } }); res.json({ message: "Cancelado" }); });
+
+// Lista todas as participações de uma área (líder: ver membros e pedidos)
+app.get('/api/areas/:id/participations', async (req, res) => {
+  try {
+    res.json(await prisma.areaParticipation.findMany({ where: { areaId: req.params.id }, include: { user: true }, orderBy: { createdAt: 'asc' } }));
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar participações.' }); }
+});
+
+// Aprovar / recusar participação em área
+app.patch('/api/areas/participations/:id', async (req, res) => {
+  try {
+    res.json(await prisma.areaParticipation.update({ where: { id: req.params.id }, data: { status: req.body.status }, include: { user: true } }));
+  } catch (e) { res.status(404).json({ error: 'Participação não encontrada.' }); }
+});
+
 app.get('/api/shifts', async (req, res) => res.json(await prisma.shift.findMany({ where: req.query.userId ? { volunteerId: String(req.query.userId) } : undefined, include: { area: true }, orderBy: { date: 'asc' } })));
 app.patch('/api/shifts/:id/confirm', async (req, res) => res.json(await prisma.shift.update({ where: { id: req.params.id }, data: { status: 'Confirmado' } })));
 
@@ -95,8 +114,26 @@ app.post('/api/links', async (req, res) => res.status(201).json(await prisma.lin
 app.put('/api/links/:id', async (req, res) => res.json(await prisma.link.update({ where: { id: req.params.id }, data: req.body, include: { leader: true } })));
 app.delete('/api/links/:id', async (req, res) => { await prisma.link.delete({ where: { id: req.params.id } }); res.json({ message: "Removido" }); });
 app.get('/api/links/my-participations', async (req, res) => res.json(await prisma.linkParticipation.findMany({ where: { userId: String(req.query.userId) }, include: { link: { include: { leader: true } } } })));
-app.post('/api/links/:id/request', async (req, res) => res.status(201).json(await prisma.linkParticipation.create({ data: { userId: req.body.userId, linkId: req.params.id, status: 'PENDENTE' } })));
+app.post('/api/links/:id/request', async (req, res) => {
+  try {
+    res.status(201).json(await prisma.linkParticipation.create({ data: { userId: req.body.userId, linkId: req.params.id, status: 'PENDENTE' } }));
+  } catch (e) { res.status(409).json({ error: 'Você já solicitou participação neste Link.' }); }
+});
 app.delete('/api/links/:id/request', async (req, res) => { await prisma.linkParticipation.deleteMany({ where: { userId: req.body.userId, linkId: req.params.id } }); res.json({ message: "Cancelado" }); });
+
+// Lista todas as participações de um link (líder: ver membros e pedidos)
+app.get('/api/links/:id/participations', async (req, res) => {
+  try {
+    res.json(await prisma.linkParticipation.findMany({ where: { linkId: req.params.id }, include: { user: true }, orderBy: { createdAt: 'asc' } }));
+  } catch (e) { res.status(500).json({ error: 'Erro ao listar participações.' }); }
+});
+
+// Aprovar / recusar participação em link
+app.patch('/api/links/participations/:id', async (req, res) => {
+  try {
+    res.json(await prisma.linkParticipation.update({ where: { id: req.params.id }, data: { status: req.body.status }, include: { user: true } }));
+  } catch (e) { res.status(404).json({ error: 'Participação não encontrada.' }); }
+});
 
 app.get('/api/links/:id/messages', async (req, res) => res.json(await prisma.linkMessage.findMany({ where: { linkId: req.params.id }, include: { author: true }, orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }] })));
 app.post('/api/links/:id/messages', async (req, res) => res.status(201).json(await prisma.linkMessage.create({ data: req.body, include: { author: true } })));

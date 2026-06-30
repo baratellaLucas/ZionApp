@@ -32,6 +32,26 @@ const LinksModule = ({ user, showNotification }) => {
   const [linkToCancel, setLinkToCancel] = useState(null);
   const [myParticipations, setMyParticipations] = useState({});
 
+  // Mapeia o nome do dia (PT) para o índice de getDay() (0=Domingo … 6=Sábado)
+  const DAY_TO_NUM = { 'Domingo': 0, 'Segunda': 1, 'Terça': 2, 'Quarta': 3, 'Quinta': 4, 'Sexta': 5, 'Sábado': 6 };
+
+  // Link online "ao vivo": entre 15 min antes e 2h30 depois do horário marcado, no dia da semana do Link.
+  const isLinkLive = (link) => {
+    if (!link?.isOnline || !link.day || !link.time) return false;
+    const target = DAY_TO_NUM[link.day];
+    if (target === undefined) return false;
+    const now = new Date();
+    if (now.getDay() !== target) return false;
+    const [h, m] = link.time.split(':').map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m)) return false;
+    const start = new Date(now);
+    start.setHours(h, m, 0, 0);
+    const open  = start.getTime() - 15 * 60 * 1000;   // 15 min antes
+    const close = start.getTime() + 150 * 60 * 1000;  // 2h30 depois
+    const t = now.getTime();
+    return t >= open && t <= close;
+  };
+
   const formatTimeAgo = (dateString) => {
     const date = new Date(dateString);
     const diffInSeconds = Math.floor((Date.now() - date) / 1000);
@@ -290,7 +310,10 @@ const LinksModule = ({ user, showNotification }) => {
                           <span className="flex items-center gap-1 bg-surface-dark px-2 py-1 rounded-md">{link.isOnline ? <Video className="w-3.5 h-3.5 text-brand-primary"/> : <MapPin className="w-3.5 h-3.5 text-brand-primary"/>} {link.isOnline ? 'Online' : 'Presencial'}</span>
                         </div>
                       </div>
-                      <div className="flex gap-2 w-full sm:w-auto">
+                      <div className="flex flex-wrap gap-2 w-full sm:w-auto">
+                        {isLinkLive(link) && (
+                          <a href={link.locationUrl || '#'} target="_blank" rel="noreferrer" className="flex-1 sm:flex-none flex items-center justify-center gap-1 text-xs font-bold text-white bg-emerald-500 hover:bg-emerald-400 px-3 py-2 rounded-default transition-colors animate-pulse shadow-[0_0_12px_rgba(16,185,129,0.55)]"><Video className="w-3.5 h-3.5"/> Entrar Agora</a>
+                        )}
                         <button onClick={() => openModal(link, 'info')} className="flex-1 sm:flex-none flex items-center justify-center gap-1 text-xs font-bold text-emerald-400 hover:text-white bg-emerald-500/10 px-3 py-2 rounded-default transition-colors"><Eye className="w-3.5 h-3.5"/> Detalhes</button>
                         <button onClick={() => openModal(link, 'mural')} className="flex-1 sm:flex-none flex items-center justify-center gap-1 text-xs font-bold text-blue-400 hover:text-white bg-blue-500/10 px-3 py-2 rounded-default transition-colors"><MessageSquare className="w-3.5 h-3.5"/> Mural</button>
                         {isLeader && (

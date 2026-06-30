@@ -16,7 +16,7 @@ const express_1 = __importDefault(require("express"));
 const cors_1 = __importDefault(require("cors"));
 const client_1 = require("@prisma/client");
 const app = (0, express_1.default)();
-const port = 3000;
+const port = Number(process.env.PORT) || 3000;
 const prisma = new client_1.PrismaClient();
 app.use((0, cors_1.default)());
 app.use(express_1.default.json({ limit: '10mb' }));
@@ -65,7 +65,7 @@ app.post('/api/events', (req, res) => __awaiter(void 0, void 0, void 0, function
 app.put('/api/events/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.json(yield prisma.event.update({ where: { id: req.params.id }, data: { title: req.body.title, date: new Date(req.body.date), location: req.body.location, type: req.body.type } })); }));
 app.delete('/api/events/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () { yield prisma.event.delete({ where: { id: req.params.id } }); res.json({ message: "Deletado" }); }));
 // --- COMUNICADOS ---
-app.get('/api/announcements', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.json(yield prisma.announcement.findMany({ orderBy: { createdAt: 'desc' } })); }));
+app.get('/api/announcements', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.json(yield prisma.announcement.findMany({ where: req.query.type ? { type: String(req.query.type) } : undefined, orderBy: { createdAt: 'desc' } })); }));
 app.post('/api/announcements', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.status(201).json(yield prisma.announcement.create({ data: req.body })); }));
 app.put('/api/announcements/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.json(yield prisma.announcement.update({ where: { id: req.params.id }, data: req.body })); }));
 app.delete('/api/announcements/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () { yield prisma.announcement.delete({ where: { id: req.params.id } }); res.json({ message: "Deletado" }); }));
@@ -80,8 +80,33 @@ app.delete('/api/areas/:id', (req, res) => __awaiter(void 0, void 0, void 0, fun
 app.patch('/api/areas/:id/leader', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.json(yield prisma.area.update({ where: { id: req.params.id }, data: { leaderId: req.body.leaderId } })); }));
 // Participações e Escalas
 app.get('/api/areas/my-participations', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.json(yield prisma.areaParticipation.findMany({ where: { userId: String(req.query.userId) }, include: { area: { include: { leader: true } } } })); }));
-app.post('/api/areas/:id/request', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.status(201).json(yield prisma.areaParticipation.create({ data: { userId: req.body.userId, areaId: req.params.id, status: 'PENDENTE' } })); }));
+app.post('/api/areas/:id/request', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        res.status(201).json(yield prisma.areaParticipation.create({ data: { userId: req.body.userId, areaId: req.params.id, status: 'PENDENTE' } }));
+    }
+    catch (e) {
+        res.status(409).json({ error: 'Você já solicitou participação nesta área.' });
+    }
+}));
 app.delete('/api/areas/:id/request', (req, res) => __awaiter(void 0, void 0, void 0, function* () { yield prisma.areaParticipation.deleteMany({ where: { userId: req.body.userId, areaId: req.params.id } }); res.json({ message: "Cancelado" }); }));
+// Lista todas as participações de uma área (líder: ver membros e pedidos)
+app.get('/api/areas/:id/participations', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        res.json(yield prisma.areaParticipation.findMany({ where: { areaId: req.params.id }, include: { user: true }, orderBy: { createdAt: 'asc' } }));
+    }
+    catch (e) {
+        res.status(500).json({ error: 'Erro ao listar participações.' });
+    }
+}));
+// Aprovar / recusar participação em área
+app.patch('/api/areas/participations/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        res.json(yield prisma.areaParticipation.update({ where: { id: req.params.id }, data: { status: req.body.status }, include: { user: true } }));
+    }
+    catch (e) {
+        res.status(404).json({ error: 'Participação não encontrada.' });
+    }
+}));
 app.get('/api/shifts', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.json(yield prisma.shift.findMany({ where: req.query.userId ? { volunteerId: String(req.query.userId) } : undefined, include: { area: true }, orderBy: { date: 'asc' } })); }));
 app.patch('/api/shifts/:id/confirm', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.json(yield prisma.shift.update({ where: { id: req.params.id }, data: { status: 'Confirmado' } })); }));
 // --- LINKS ---
@@ -93,8 +118,33 @@ app.post('/api/links', (req, res) => __awaiter(void 0, void 0, void 0, function*
 app.put('/api/links/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.json(yield prisma.link.update({ where: { id: req.params.id }, data: req.body, include: { leader: true } })); }));
 app.delete('/api/links/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () { yield prisma.link.delete({ where: { id: req.params.id } }); res.json({ message: "Removido" }); }));
 app.get('/api/links/my-participations', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.json(yield prisma.linkParticipation.findMany({ where: { userId: String(req.query.userId) }, include: { link: { include: { leader: true } } } })); }));
-app.post('/api/links/:id/request', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.status(201).json(yield prisma.linkParticipation.create({ data: { userId: req.body.userId, linkId: req.params.id, status: 'PENDENTE' } })); }));
+app.post('/api/links/:id/request', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        res.status(201).json(yield prisma.linkParticipation.create({ data: { userId: req.body.userId, linkId: req.params.id, status: 'PENDENTE' } }));
+    }
+    catch (e) {
+        res.status(409).json({ error: 'Você já solicitou participação neste Link.' });
+    }
+}));
 app.delete('/api/links/:id/request', (req, res) => __awaiter(void 0, void 0, void 0, function* () { yield prisma.linkParticipation.deleteMany({ where: { userId: req.body.userId, linkId: req.params.id } }); res.json({ message: "Cancelado" }); }));
+// Lista todas as participações de um link (líder: ver membros e pedidos)
+app.get('/api/links/:id/participations', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        res.json(yield prisma.linkParticipation.findMany({ where: { linkId: req.params.id }, include: { user: true }, orderBy: { createdAt: 'asc' } }));
+    }
+    catch (e) {
+        res.status(500).json({ error: 'Erro ao listar participações.' });
+    }
+}));
+// Aprovar / recusar participação em link
+app.patch('/api/links/participations/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        res.json(yield prisma.linkParticipation.update({ where: { id: req.params.id }, data: { status: req.body.status }, include: { user: true } }));
+    }
+    catch (e) {
+        res.status(404).json({ error: 'Participação não encontrada.' });
+    }
+}));
 app.get('/api/links/:id/messages', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.json(yield prisma.linkMessage.findMany({ where: { linkId: req.params.id }, include: { author: true }, orderBy: [{ isPinned: 'desc' }, { createdAt: 'desc' }] })); }));
 app.post('/api/links/:id/messages', (req, res) => __awaiter(void 0, void 0, void 0, function* () { return res.status(201).json(yield prisma.linkMessage.create({ data: req.body, include: { author: true } })); }));
 app.delete('/api/links/messages/:id', (req, res) => __awaiter(void 0, void 0, void 0, function* () { yield prisma.linkMessage.delete({ where: { id: req.params.id } }); res.json({ message: "Deletado" }); }));
