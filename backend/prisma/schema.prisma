@@ -1,0 +1,145 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+model User {
+  id            String   @id @default(uuid())
+  name          String
+  email         String   @unique
+  password      String   @default("123")
+  role          String   @default("MEMBRO") // MEMBRO, LIDER, ADMIN
+  campus        String   @default("Zion Ribeirão Preto")
+  points        Int      @default(0)
+  bibleStreak   Int      @default(0)
+  profileImage  String?  // CAMPO NOVO: Foto de Perfil (Base64 ou URL)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  linkParticipations LinkParticipation[]
+  areaParticipations AreaParticipation[]
+  shifts             Shift[]
+  messages           LinkMessage[]
+  publications       Publication[] 
+
+  ledLinks           Link[] @relation("LinkLeader")
+  ledAreas           Area[] @relation("AreaLeader")
+}
+
+model Publication {
+  id          String   @id @default(uuid())
+  content     String
+  imageUrl    String?
+  documentUrl String?
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Link {
+  id          String   @id @default(uuid())
+  name        String
+  day         String
+  time        String
+  isOnline    Boolean  @default(false)
+  locationUrl String?
+  description String?
+  leaderId    String
+  leader      User     @relation("LinkLeader", fields: [leaderId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  participations LinkParticipation[]
+  messages       LinkMessage[]
+}
+
+model LinkMessage {
+  id        String   @id @default(uuid())
+  content   String
+  category  String   @default("RESUMO")
+  isPinned  Boolean  @default(false)
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  linkId    String
+  link      Link     @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model LinkParticipation {
+  id        String   @id @default(uuid())
+  status    String   @default("PENDENTE")
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  linkId    String
+  link      Link     @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, linkId])
+}
+
+model Event {
+  id          String   @id @default(uuid())
+  title       String
+  date        DateTime
+  location    String?
+  type        String   @default("GERAL") 
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model Announcement {
+  id        String   @id @default(uuid())
+  title     String
+  content   String
+  type      String   @default("GERAL") 
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Area {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  leaderId    String
+  leader      User     @relation("AreaLeader", fields: [leaderId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  participations AreaParticipation[]
+  shifts         Shift[]
+}
+
+model AreaParticipation {
+  id        String   @id @default(uuid())
+  status    String   @default("PENDENTE")
+  role      String   @default("Voluntário")
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  areaId    String
+  area      Area     @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, areaId])
+}
+
+model Shift {
+  id          String   @id @default(uuid())
+  department  String
+
+  date        DateTime
+  status      String   @default("Pendente")
+  volunteerId String?
+  user        User?    @relation(fields: [volunteerId], references: [id])
+  areaId      String?
+  area        Area?    @relation(fields: [areaId], references: [id])
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
