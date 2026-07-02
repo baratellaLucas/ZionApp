@@ -199,7 +199,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
       });
       if (res.ok) {
         setAllUsers(allUsers.map(u => u.id === userId ? { ...u, canRedeem } : u));
-        showNotification(canRedeem ? 'Resgate liberado para o membro!' : 'Resgate bloqueado para o membro.');
+        showNotification(canRedeem ? 'Membro liberado como atendente (valida vouchers)!' : 'Acesso de atendente removido.');
       }
     } catch (e) {
       setAllUsers(allUsers.map(u => u.id === userId ? { ...u, canRedeem } : u));
@@ -477,7 +477,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                 </div>
               )}
 
-              <p className="text-[11px] text-text-muted">Além da permissão do cargo, o resgate na Loja também exige a liberação individual ("Resgate ON") na aba Membros.</p>
+              <p className="text-[11px] text-text-muted">O resgate na Loja é livre para todos os usuários. Já a validação/baixa de vouchers é liberada individualmente pela flag "Atendente" na aba Membros.</p>
             </div>
           )}
 
@@ -963,10 +963,10 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                      <div className="flex items-center gap-2 sm:justify-end flex-wrap">
                        <button
                          onClick={() => handleRedeemFlagToggle(usr.id, !usr.canRedeem)}
-                         title={usr.canRedeem ? 'Resgate liberado — clique para bloquear' : 'Resgate bloqueado — clique para liberar'}
+                         title={usr.canRedeem ? 'Pode validar/dar baixa em vouchers — clique para remover' : 'Não valida vouchers — clique para liberar como atendente'}
                          className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-md border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${usr.canRedeem ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/20' : 'text-text-muted bg-surface-dark border-white/10 hover:text-white'}`}
                        >
-                         <Gift className="w-3.5 h-3.5"/> {usr.canRedeem ? 'Resgate ON' : 'Resgate OFF'}
+                         <QrCode className="w-3.5 h-3.5"/> {usr.canRedeem ? 'Atendente ✓' : 'Atendente'}
                        </button>
                        {user.role === 'ADMIN' && (
                        <button

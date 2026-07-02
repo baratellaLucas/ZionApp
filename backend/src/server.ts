@@ -44,8 +44,8 @@ const ALL_ROLES = ['MEMBRO', 'VOLUNTARIO', 'AUXILIAR_LIDER', 'LIDER', 'PASTOR', 
 // defaultMinRank define quem tem a permissão por padrão (cargo com rank >= mínimo).
 // A matriz salva em RolePermission sobrepõe o padrão; ADMIN sempre tem tudo (anti-lockout).
 const PERM_CATALOG: { key: string; label: string; description: string; defaultMinRank: number }[] = [
-  { key: 'STORE_REDEEM',       label: 'Resgatar prêmios na Loja',            description: 'Trocar Zion Points por prêmios (também exige a liberação individual "Resgate ON").', defaultMinRank: ROLE_RANK.VOLUNTARIO },
-  { key: 'VOUCHER_VALIDATE',   label: 'Validar vouchers (atendente)',        description: 'Escanear o QR do voucher e dar baixa na entrega do prêmio.',                        defaultMinRank: ROLE_RANK.ADMIN },
+  // Obs.: resgate na Loja é livre (qualquer usuário com pontos) e a validação de voucher é
+  // controlada pela flag "Atendente" por usuário (Admin > Membros), não pela matriz de cargos.
   { key: 'EVENT_CHECKIN_CODE', label: 'Gerar QR de check-in de eventos',     description: 'Ver o código/QR de check-in para exibir no local do evento.',                       defaultMinRank: ROLE_RANK.ADMIN },
   { key: 'GROUP_CREATE',       label: 'Criar grupos de leitura',             description: 'Criar novos grupos de competição do Plano Bíblico.',                                defaultMinRank: ROLE_RANK.MEMBRO },
 ];
@@ -62,6 +62,14 @@ const hasPerm = async (role: string | undefined, permKey: string): Promise<boole
 const requirePerm = (permKey: string) => (req: Request, res: Response, next: NextFunction) => {
   hasPerm(req.user?.role, permKey)
     .then(ok => ok ? next() : res.status(403).json({ error: 'Seu cargo não tem permissão para esta ação.' }))
+    .catch(next);
+};
+
+// Validar/dar baixa em voucher: atendente liberado pela flag "canRedeem" (Admin > Membros) ou staff.
+const canValidateVoucher = (req: Request, res: Response, next: NextFunction) => {
+  if (isStaff(req)) return next();
+  prisma.user.findUnique({ where: { id: req.user!.id }, select: { canRedeem: true } })
+    .then(u => u?.canRedeem ? next() : res.status(403).json({ error: 'Você não tem permissão para validar vouchers. Peça à liderança para liberar seu acesso de atendente.' }))
     .catch(next);
 };
 
@@ -753,8 +761,7 @@ app.post('/api/products/:id/redeem', h(async (req, res) => {
   if (!product || !product.active) return res.status(404).json({ error: 'Produto indisponível.' });
   const user = await prisma.user.findUnique({ where: { id: req.user!.id } });
   if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
-  if (!(await hasPerm(user.role, 'STORE_REDEEM'))) return res.status(403).json({ error: 'Seu cargo não permite resgatar prêmios (padrão: voluntários ou acima).' });
-  if (!user.canRedeem) return res.status(403).json({ error: 'Seu acesso a resgates ainda não foi liberado pela liderança.' });
+  // Resgate é livre para qualquer usuário autenticado — basta ter Zion Points suficientes.
   if (user.points < product.cost) return res.status(400).json({ error: 'Zion Points insuficientes.' });
 
   const [redemption, updatedUser] = await prisma.$transaction([
@@ -768,7 +775,7 @@ app.post('/api/products/:id/redeem', h(async (req, res) => {
 app.get('/api/redemptions/my', h(async (req, res) => res.json(await prisma.redemption.findMany({ where: { userId: req.user!.id }, orderBy: { createdAt: 'desc' } }))));
 
 // Validar voucher pelo código (admin) — confere autenticidade e se ainda está ativo
-app.get('/api/redemptions/validate/:code', requirePerm('VOUCHER_VALIDATE'), h(async (req, res) => {
+app.get('/api/redemptions/validate/:code', canValidateVoucher, h(async (req, res) => {
   const r = await prisma.redemption.findUnique({ where: { code: String(req.params.code) }, include: { user: { select: userPublic } } });
   if (!r) return res.status(404).json({ valid: false, error: 'Código não encontrado.' });
   res.json({ valid: r.status === 'ATIVO', redemption: r });
@@ -779,7 +786,7 @@ app.patch('/api/redemptions/:id/use', staffOnly,h(async (req, res) => res.json(a
 
 // Validar + consumir voucher pelo código, em uma etapa (atendente via QR). Idempotente.
 const consumeSchema = z.object({ code: z.string().min(1) });
-app.post('/api/redemptions/consume', requirePerm('VOUCHER_VALIDATE'), validate(consumeSchema), h(async (req, res) => {
+app.post('/api/redemptions/consume', canValidateVoucher, validate(consumeSchema), h(async (req, res) => {
   const code = String(req.body.code).trim().toUpperCase();
   const r = await prisma.redemption.findUnique({ where: { code }, include: { user: { select: userPublic } } });
   if (!r) return res.status(404).json({ error: 'Voucher não encontrado.' });

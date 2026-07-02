@@ -1,9 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Gift, Award, Ticket, Tag, Check, X, Loader2, Copy, ShoppingBag, QrCode, Lock } from 'lucide-react';
+import { Gift, Award, Ticket, Tag, Check, X, Loader2, Copy, ShoppingBag, QrCode } from 'lucide-react';
 import { apiFetch } from '../api';
-
-// Fallback local (usado só se /api/permissions/me falhar): padrão é VOLUNTARIO+
-const ROLE_RANK = { MEMBRO: 0, VOLUNTARIO: 1, AUXILIAR_LIDER: 2, LIDER: 3, ADMIN: 4 };
 
 // URL que o QR do voucher codifica — o atendente escaneia e o app valida/consome automaticamente
 const voucherQrUrl = (code) => `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(`${window.location.origin}/?voucher=${code}`)}`;
@@ -17,37 +14,21 @@ const RewardsModule = ({ user, setUser, showNotification }) => {
   const [qrVoucher, setQrVoucher] = useState(null); // voucher exibido como QR para o atendente
   const [redeeming, setRedeeming] = useState(false);
 
-  const [rolePermitted, setRolePermitted] = useState(null); // null = ainda não carregado
-
   const loadData = async () => {
     try {
       setIsLoading(true);
-      const [resProd, resRed, resPerms] = await Promise.all([
+      const [resProd, resRed] = await Promise.all([
         apiFetch('/api/products').catch(() => null),
         apiFetch('/api/redemptions/my').catch(() => null),
-        apiFetch('/api/permissions/me').catch(() => null),
       ]);
       if (resProd && resProd.ok) setProducts((await resProd.json()).filter(p => p.active));
       if (resRed && resRed.ok) setMyRedemptions(await resRed.json());
-      if (resPerms && resPerms.ok) {
-        const d = await resPerms.json();
-        setRolePermitted((d.permissions || []).includes('STORE_REDEEM'));
-      }
     } catch { /* offline */ } finally { setIsLoading(false); }
   };
 
   useEffect(() => { loadData(); }, [user?.id]);
 
   const points = user?.points || 0;
-
-  // Elegibilidade: permissão do cargo (matriz Admin > Cargos) E liberação individual (canRedeem)
-  const meetsRole = rolePermitted !== null ? rolePermitted : (ROLE_RANK[user?.role] ?? 0) >= ROLE_RANK.VOLUNTARIO;
-  const canRedeem = meetsRole && !!user?.canRedeem;
-  const blockReason = !meetsRole
-    ? 'Seu cargo ainda não permite resgates (padrão: voluntários ou acima). Sirva em uma área para desbloquear.'
-    : !user?.canRedeem
-      ? 'Seu acesso a resgates ainda não foi liberado pela liderança.'
-      : '';
 
   const handleRedeem = async () => {
     if (!confirmProduct) return;
@@ -91,13 +72,6 @@ const RewardsModule = ({ user, setUser, showNotification }) => {
         </div>
       </div>
 
-      {!canRedeem && (
-        <div className="flex items-start gap-3 bg-amber-500/10 border border-amber-500/20 rounded-default px-4 py-3 text-sm text-amber-300">
-          <Lock className="w-4 h-4 shrink-0 mt-0.5" />
-          <span>Você pode acumular Zion Points normalmente, mas os resgates estão bloqueados. {blockReason}</span>
-        </div>
-      )}
-
       {isLoading ? (
         <div className="flex justify-center py-10"><div className="w-8 h-8 border-4 border-brand-primary border-t-transparent rounded-full animate-spin"></div></div>
       ) : products.length === 0 ? (
@@ -119,11 +93,11 @@ const RewardsModule = ({ user, setUser, showNotification }) => {
                     <span className="flex items-center gap-1 font-display font-bold text-brand-primary"><Award className="w-4 h-4" /> {p.cost}</span>
                     <button
                       onClick={() => setConfirmProduct(p)}
-                      disabled={!canAfford || !canRedeem}
-                      title={!canRedeem ? blockReason : (canAfford ? '' : 'Pontos insuficientes')}
+                      disabled={!canAfford}
+                      title={canAfford ? '' : 'Pontos insuficientes'}
                       className="flex items-center gap-1 text-xs font-bold px-4 py-2 rounded-md transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 disabled:opacity-40 disabled:cursor-not-allowed bg-brand-primary text-white hover:bg-brand-secondary"
                     >
-                      {!canRedeem && <Lock className="w-3 h-3" />} Resgatar
+                      Resgatar
                     </button>
                   </div>
                 </div>
