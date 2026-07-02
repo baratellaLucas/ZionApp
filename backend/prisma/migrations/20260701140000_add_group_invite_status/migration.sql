@@ -1,0 +1,2 @@
+-- AlterTable
+ALTER TABLE "GroupMember" ADD COLUMN "status" TEXT NOT NULL DEFAULT 'ATIVO';

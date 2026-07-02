@@ -12,10 +12,12 @@ model User {
   name          String
   email         String   @unique
   password      String   @default("123")
-  role          String   @default("MEMBRO") // MEMBRO, LIDER, ADMIN
+  role          String   @default("MEMBRO") // MEMBRO, VOLUNTARIO, AUXILIAR_LIDER, LIDER, ADMIN
   campus        String   @default("Zion Ribeirão Preto")
   points        Int      @default(0)
   bibleStreak   Int      @default(0)
+  canRedeem     Boolean  @default(false) // liberação da liderança para resgatar prêmios na loja
+  welcomed      Boolean  @default(false) // já viu o pop-up de boas-vindas no primeiro acesso
   profileImage  String?  // CAMPO NOVO: Foto de Perfil (Base64 ou URL)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
@@ -27,9 +29,96 @@ model User {
   publications       Publication[]
   redemptions        Redemption[]
   readingLogs        ReadingLog[]
+  pointAwards        PointAward[]
+  ownedGroups        ReadingGroup[] @relation("GroupOwner")
+  groupMemberships   GroupMember[]
+  notifications      Notification[]
+  groupMessages      GroupMessage[]
+  bugReports         BugReport[]
+  prayerRequests     PrayerRequest[]
+  areaMessages       AreaMessage[]
 
   ledLinks           Link[] @relation("LinkLeader")
   ledAreas           Area[] @relation("AreaLeader")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  type      String   // INFO, REQUEST, APPROVED, REJECTED, MILESTONE, REMINDER
+  title     String
+  body      String?
+  refId     String?  // dedupe/deep-link (ex: reminder-182)
+  route     String?  // destino ao clicar (ex: "membros:reading", "voluntarios", "links", "membros:groups")
+  read      Boolean  @default(false)
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@index([userId, read])
+}
+
+// Ledger de pontos: garante que cada ação credite pontos apenas uma vez
+model PointAward {
+  id        String   @id @default(uuid())
+  ruleKey   String   // ex: EVENT_PARTICIPATION
+  refId     String   // id da ação (evento, escala, treinamento...)
+  points    Int
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+
+  @@unique([userId, ruleKey, refId])
+}
+
+model ReadingGroup {
+  id          String   @id @default(uuid())
+  name        String
+  description String?
+  ownerId     String
+  owner       User     @relation("GroupOwner", fields: [ownerId], references: [id])
+  createdAt   DateTime @default(now())
+
+  members     GroupMember[]
+  messages    GroupMessage[]
+}
+
+model GroupMessage {
+  id        String       @id @default(uuid())
+  type      String       @default("COMMENT") // READING (atividade automática), COMMENT
+  content   String       // texto do comentário OU referência da leitura
+  imageUrl  String?      // foto da leitura (quando type READING com foto)
+  groupId   String
+  group     ReadingGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User         @relation(fields: [userId], references: [id])
+  createdAt DateTime     @default(now())
+
+  reactions MessageReaction[]
+
+  @@index([groupId, createdAt])
+}
+
+model MessageReaction {
+  id        String       @id @default(uuid())
+  emoji     String
+  userId    String       // sem relação de volta em User (apenas referência)
+  messageId String
+  message   GroupMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdAt DateTime     @default(now())
+
+  @@unique([messageId, userId, emoji])
+}
+
+model GroupMember {
+  id        String       @id @default(uuid())
+  status    String       @default("ATIVO") // ATIVO, PENDENTE (convite não aceito)
+  groupId   String
+  group     ReadingGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+  userId    String
+  user      User         @relation(fields: [userId], references: [id])
+  createdAt DateTime     @default(now())
+
+  @@unique([groupId, userId])
 }
 
 model ReadingLog {
@@ -42,6 +131,36 @@ model ReadingLog {
   createdAt DateTime @default(now())
 
   @@unique([userId, day])
+}
+
+// Permissões por cargo (matriz configurável no Admin > Cargos)
+model RolePermission {
+  id      String  @id @default(uuid())
+  role    String  // MEMBRO, VOLUNTARIO, AUXILIAR, LIDER, ADMIN
+  permKey String  // ex: STORE_REDEEM, VOUCHER_VALIDATE
+  allowed Boolean @default(false)
+
+  @@unique([role, permKey])
+}
+
+model BugReport {
+  id          String   @id @default(uuid())
+  type        String   @default("BUG") // BUG, SUGESTAO
+  title       String
+  description String
+  status      String   @default("ABERTO") // ABERTO, RESOLVIDO
+  userId      String
+  user        User     @relation(fields: [userId], references: [id])
+  createdAt   DateTime @default(now())
+}
+
+model PrayerRequest {
+  id        String   @id @default(uuid())
+  content   String
+  status    String   @default("ATIVO") // ATIVO, ORADO
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
 }
 
 model PointRule {
@@ -113,16 +232,42 @@ model Link {
 }
 
 model LinkMessage {
-  id        String   @id @default(uuid())
-  content   String
-  category  String   @default("RESUMO")
-  isPinned  Boolean  @default(false)
-  authorId  String
-  author    User     @relation(fields: [authorId], references: [id])
-  linkId    String
-  link      Link     @relation(fields: [linkId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(uuid())
+  content     String
+  category    String   @default("RESUMO")
+  isPinned    Boolean  @default(false)
+  pollOptions String?  // JSON de opções quando é enquete (ex: ["Sim","Não"])
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id])
+  linkId      String
+  link        Link     @relation(fields: [linkId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  reactions   LinkMessageReaction[]
+  votes       PollVote[]
+}
+
+model LinkMessageReaction {
+  id        String      @id @default(uuid())
+  emoji     String
+  userId    String
+  messageId String
+  message   LinkMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdAt DateTime    @default(now())
+
+  @@unique([messageId, userId, emoji])
+}
+
+model PollVote {
+  id          String      @id @default(uuid())
+  optionIndex Int
+  userId      String
+  messageId   String
+  message     LinkMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdAt   DateTime    @default(now())
+
+  @@unique([messageId, userId])
 }
 
 model LinkParticipation {
@@ -145,6 +290,7 @@ model Event {
   location    String?
   type        String   @default("GERAL")
   recurrence  String   @default("NONE") // NONE, WEEKLY, MONTHLY
+  checkinCode String   @default("") // código para check-in via QR
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -169,6 +315,46 @@ model Area {
 
   participations AreaParticipation[]
   shifts         Shift[]
+  messages       AreaMessage[]
+}
+
+model AreaMessage {
+  id          String   @id @default(uuid())
+  content     String
+  category    String   @default("AVISO")
+  isPinned    Boolean  @default(false)
+  pollOptions String?  // JSON de opções quando é enquete
+  authorId    String
+  author      User     @relation(fields: [authorId], references: [id])
+  areaId      String
+  area        Area     @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  reactions   AreaMessageReaction[]
+  votes       AreaPollVote[]
+}
+
+model AreaMessageReaction {
+  id        String      @id @default(uuid())
+  emoji     String
+  userId    String
+  messageId String
+  message   AreaMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdAt DateTime    @default(now())
+
+  @@unique([messageId, userId, emoji])
+}
+
+model AreaPollVote {
+  id          String      @id @default(uuid())
+  optionIndex Int
+  userId      String
+  messageId   String
+  message     AreaMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  createdAt   DateTime    @default(now())
+
+  @@unique([messageId, userId])
 }
 
 model AreaParticipation {

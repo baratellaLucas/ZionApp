@@ -1,5 +1,9 @@
 import React, { useState, useEffect } from 'react';
-import { Users, Clock, Video, MapPin, MessageSquare, Edit3, X, CheckCircle, Pin, Trash2, Send, Megaphone, FileText, Quote, Lightbulb, AlertTriangle, ExternalLink, ShieldCheck, Save, Eye } from 'lucide-react';
+import { apiFetch } from '../api';
+import Avatar from '../components/Avatar';
+import { Users, Clock, Video, MapPin, MessageSquare, Edit3, X, CheckCircle, Pin, Trash2, Send, Megaphone, FileText, Quote, Lightbulb, AlertTriangle, ExternalLink, ShieldCheck, Save, Eye, BarChart3, Smile, Plus } from 'lucide-react';
+
+const REACTION_EMOJIS = ['🔥', '❤️', '🙏', '👏', '😂', '🙌'];
 
 const MAX_LINKS_PER_PERSON = 2;
 
@@ -25,6 +29,8 @@ const LinksModule = ({ user, showNotification }) => {
   const [newMsgContent, setNewMsgContent] = useState('');
   const [newMsgCategory, setNewMsgCategory] = useState('RESUMO');
   const [isPostingMsg, setIsPostingMsg] = useState(false);
+  const [isPoll, setIsPoll] = useState(false);
+  const [pollOptions, setPollOptions] = useState(['', '']);
 
   const [editingLink, setEditingLink] = useState(null);
   const [formData, setFormData] = useState({});
@@ -66,7 +72,7 @@ const LinksModule = ({ user, showNotification }) => {
     if (!linkId) return;
     setIsFetchingMessages(true);
     try {
-      const res = await fetch(`http://localhost:3000/api/links/${linkId}/messages`).catch(() => null);
+      const res = await apiFetch(`/api/links/${linkId}/messages`).catch(() => null);
       if (res && res.ok) setLinkMessages(await res.json());
     } catch (e) {
     } finally {
@@ -78,11 +84,11 @@ const LinksModule = ({ user, showNotification }) => {
     const fetchData = async () => {
       try {
         setIsLoading(true);
-        const resLinks = await fetch('http://localhost:3000/api/links').catch(() => null);
+        const resLinks = await apiFetch('/api/links').catch(() => null);
         if (resLinks && resLinks.ok) setLinks(await resLinks.json());
 
         if (user?.id) {
-          const resMine = await fetch(`http://localhost:3000/api/links/my-participations?userId=${user.id}`).catch(() => null);
+          const resMine = await apiFetch(`/api/links/my-participations?userId=${user.id}`).catch(() => null);
           if (resMine && resMine.ok) {
             const dataMine = await resMine.json();
             const map = {};
@@ -100,7 +106,7 @@ const LinksModule = ({ user, showNotification }) => {
       const ledLinks = links.filter(l => l.leaderId === user.id);
       ledLinks.forEach(async (link) => {
         try {
-          const res = await fetch(`http://localhost:3000/api/links/${link.id}/participations`).catch(() => null);
+          const res = await apiFetch(`/api/links/${link.id}/participations`).catch(() => null);
           if (res && res.ok) {
             const parts = await res.json();
             setLinkRequests(prev => ({ ...prev, [link.id]: parts.filter(p => p.status === 'PENDENTE') }));
@@ -120,7 +126,7 @@ const LinksModule = ({ user, showNotification }) => {
     setMyParticipations(prev => ({ ...prev, [link.id]: 'PENDENTE' }));
     
     try {
-      const res = await fetch(`http://localhost:3000/api/links/${link.id}/request`, {
+      const res = await apiFetch(`/api/links/${link.id}/request`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user.id })
       });
       if (res.ok) {
@@ -149,7 +155,7 @@ const LinksModule = ({ user, showNotification }) => {
     setSelectedLink(null);
     
     try {
-      await fetch(`http://localhost:3000/api/links/${link.id}/request`, {
+      await apiFetch(`/api/links/${link.id}/request`, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user.id })
       });
       showNotification(`Ação confirmada.`);
@@ -160,7 +166,7 @@ const LinksModule = ({ user, showNotification }) => {
 
   const handleApproveReject = async (participationId, linkId, status) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/links/participations/${participationId}`, {
+      const res = await apiFetch(`/api/links/participations/${participationId}`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ status, leaderUserId: user.id })
       });
       if (res.ok) {
@@ -175,7 +181,7 @@ const LinksModule = ({ user, showNotification }) => {
   const handleSaveLinkEdit = async (e) => {
     e.preventDefault();
     try {
-      const res = await fetch(`http://localhost:3000/api/links/${editingLink.id}`, {
+      const res = await apiFetch(`/api/links/${editingLink.id}`, {
         method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(formData)
       });
       if (res.ok) {
@@ -196,7 +202,7 @@ const LinksModule = ({ user, showNotification }) => {
     setActiveModalTab(defaultTab);
     setIsLoadingMembers(true);
     try {
-      const res = await fetch(`http://localhost:3000/api/links/${link.id}/participations`);
+      const res = await apiFetch(`/api/links/${link.id}/participations`);
       if (res.ok) {
         const parts = await res.json();
         setSelectedLinkMembers(parts.filter(p => p.status === 'APROVADO'));
@@ -206,36 +212,118 @@ const LinksModule = ({ user, showNotification }) => {
     fetchMessagesForLink(link.id);
   };
 
+  const resetComposer = () => { setNewMsgContent(''); setIsPoll(false); setPollOptions(['', '']); };
+
   const handlePostMessage = async (e) => {
     e.preventDefault();
     if (!newMsgContent.trim() || !user?.id) return;
+    const cleanOptions = pollOptions.map(o => o.trim()).filter(Boolean);
+    if (isPoll && cleanOptions.length < 2) { showNotification("Uma enquete precisa de pelo menos 2 opções."); return; }
     setIsPostingMsg(true);
+    const payload = { content: newMsgContent, category: newMsgCategory };
+    if (isPoll) payload.pollOptions = cleanOptions;
     try {
-      const res = await fetch(`http://localhost:3000/api/links/${selectedLink.id}/messages`, {
+      const res = await apiFetch(`/api/links/${selectedLink.id}/messages`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ content: newMsgContent, category: newMsgCategory, authorId: user.id })
+        body: JSON.stringify(payload)
       });
       if (res.ok) {
-        const msg = await res.json();
-        setLinkMessages([msg, ...linkMessages]); 
-        setNewMsgContent('');
-        showNotification("Publicado no mural!");
-        fetchMessagesForLink(selectedLink.id); 
+        resetComposer();
+        showNotification(isPoll ? "Enquete publicada!" : "Publicado no mural!");
+        fetchMessagesForLink(selectedLink.id);
       } else throw new Error('Offline');
     } catch (err) {
       const mockMsg = {
          id: Date.now().toString(), content: newMsgContent, category: newMsgCategory, isPinned: false,
-         authorId: user?.id, author: { name: user?.name }, createdAt: new Date().toISOString()
+         authorId: user?.id, author: { name: user?.name }, createdAt: new Date().toISOString(),
+         reactions: [], poll: isPoll ? { options: cleanOptions.map(text => ({ text, count: 0 })), totalVotes: 0, myVote: null } : null
       };
-      setLinkMessages([mockMsg, ...linkMessages]); 
-      setNewMsgContent('');
+      setLinkMessages([mockMsg, ...linkMessages]);
+      resetComposer();
       showNotification("Publicado no mural (Modo Local)!");
     } finally { setIsPostingMsg(false); }
   };
 
+  const handleReact = async (msgId, emoji) => {
+    setLinkMessages(prev => prev.map(m => {
+      if (m.id !== msgId) return m;
+      const reactions = [...(m.reactions || [])];
+      const idx = reactions.findIndex(r => r.emoji === emoji);
+      if (idx >= 0) {
+        const r = reactions[idx];
+        if (r.mine) { const count = r.count - 1; if (count <= 0) reactions.splice(idx, 1); else reactions[idx] = { ...r, count, mine: false }; }
+        else reactions[idx] = { ...r, count: r.count + 1, mine: true };
+      } else reactions.push({ emoji, count: 1, mine: true });
+      return { ...m, reactions };
+    }));
+    try {
+      await apiFetch(`/api/links/messages/${msgId}/react`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ emoji }) });
+    } catch (e) {}
+  };
+
+  const handleVote = async (msgId, optionIndex) => {
+    setLinkMessages(prev => prev.map(m => {
+      if (m.id !== msgId || !m.poll) return m;
+      const prevVote = m.poll.myVote;
+      if (prevVote === optionIndex) return m;
+      const options = m.poll.options.map((o, i) => {
+        let count = o.count;
+        if (i === optionIndex) count++;
+        if (i === prevVote) count--;
+        return { ...o, count };
+      });
+      const totalVotes = prevVote === null || prevVote === undefined ? (m.poll.totalVotes || 0) + 1 : m.poll.totalVotes;
+      return { ...m, poll: { ...m.poll, options, myVote: optionIndex, totalVotes } };
+    }));
+    try {
+      await apiFetch(`/api/links/messages/${msgId}/vote`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ optionIndex }) });
+    } catch (e) {}
+  };
+
+  const renderPoll = (msg) => {
+    if (!msg.poll) return null;
+    const total = msg.poll.totalVotes || 0;
+    return (
+      <div className="mt-3 space-y-2">
+        {msg.poll.options.map((opt, i) => {
+          const pct = total > 0 ? Math.round((opt.count / total) * 100) : 0;
+          const mine = msg.poll.myVote === i;
+          return (
+            <button key={i} type="button" onClick={() => handleVote(msg.id, i)} className={`relative w-full text-left rounded-md border overflow-hidden transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${mine ? 'border-brand-primary' : 'border-white/10 hover:border-white/20'}`}>
+              <div className="absolute inset-y-0 left-0 bg-brand-primary/20 transition-all" style={{ width: `${pct}%` }}></div>
+              <div className="relative flex justify-between items-center px-3 py-2 text-sm gap-2">
+                <span className={`font-medium ${mine ? 'text-brand-primary' : 'text-text-primary'}`}>{mine ? '✓ ' : ''}{opt.text}</span>
+                <span className="text-xs text-text-muted shrink-0">{pct}% · {opt.count}</span>
+              </div>
+            </button>
+          );
+        })}
+        <div className="text-[10px] text-text-muted">{total} voto{total !== 1 ? 's' : ''}</div>
+      </div>
+    );
+  };
+
+  const renderReactions = (msg) => (
+    <div className="flex flex-wrap items-center gap-1.5 mt-3">
+      {(msg.reactions || []).map(r => (
+        <button key={r.emoji} type="button" onClick={() => handleReact(msg.id, r.emoji)} className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${r.mine ? 'bg-brand-primary/20 border-brand-primary/40 text-brand-primary' : 'bg-surface-card border-white/10 text-text-muted hover:border-white/20'}`}>
+          <span>{r.emoji}</span><span className="font-semibold">{r.count}</span>
+        </button>
+      ))}
+      <div className="relative group/react">
+        <button type="button" aria-label="Reagir" className="flex items-center justify-center w-7 h-7 rounded-full bg-surface-card border border-white/10 text-text-muted hover:text-white hover:border-white/20 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Smile className="w-3.5 h-3.5" /></button>
+        <div className="absolute z-10 bottom-full left-0 mb-1 hidden group-hover/react:flex group-focus-within/react:flex gap-1 bg-surface-card border border-white/10 rounded-full px-2 py-1 shadow-lg">
+          {REACTION_EMOJIS.map(e => (
+            <button key={e} type="button" onClick={() => handleReact(msg.id, e)} className="hover:scale-125 transition-transform text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 rounded">{e}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
   const handleTogglePin = async (msgId) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/links/messages/${msgId}/pin`, {
+      const res = await apiFetch(`/api/links/messages/${msgId}/pin`, {
         method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ leaderUserId: user.id })
       });
       if (res.ok) fetchMessagesForLink(selectedLink.id);
@@ -244,7 +332,7 @@ const LinksModule = ({ user, showNotification }) => {
 
   const handleDeleteMessage = async (msgId) => {
     try {
-      await fetch(`http://localhost:3000/api/links/messages/${msgId}`, { method: 'DELETE' }).catch(() => null);
+      await apiFetch(`/api/links/messages/${msgId}`, { method: 'DELETE' }).catch(() => null);
       setLinkMessages(prev => prev.filter(m => m.id !== msgId));
       showNotification("Mensagem apagada com sucesso.");
     } catch(err) { 
@@ -273,19 +361,19 @@ const LinksModule = ({ user, showNotification }) => {
                   <button onClick={() => setEditingLink(null)} className="p-1 hover:bg-white/5 rounded-full"><X className="w-5 h-5 text-text-muted"/></button>
                 </div>
                 <form onSubmit={handleSaveLinkEdit} className="space-y-4">
-                  <input required type="text" value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} placeholder="Nome do Link" className="w-full bg-surface-dark border border-white/10 rounded-default px-4 py-3 text-text-primary focus:border-brand-primary outline-none" />
+                  <input required type="text" value={formData.name} onChange={(e) => setFormData({...formData, name: e.target.value})} placeholder="Nome do Link" className="w-full bg-surface-dark border border-white/10 rounded-default px-4 py-3 text-text-primary focus:border-brand-primary outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60" />
                   <div className="grid grid-cols-2 gap-4">
-                    <select value={formData.day} onChange={(e) => setFormData({...formData, day: e.target.value})} className="w-full bg-surface-dark border border-white/10 rounded-default px-4 py-3 text-text-primary outline-none">
-                      <option value="Sexta">Sexta</option> <option value="Sábado">Sábado</option> <option value="Domingo">Domingo</option> <option value="Quarta">Quarta</option> <option value="Quinta">Quinta</option>
+                    <select value={formData.day} onChange={(e) => setFormData({...formData, day: e.target.value})} className="w-full bg-surface-dark border border-white/10 rounded-default px-4 py-3 text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                      {['Segunda','Terça','Quarta','Quinta','Sexta','Sábado','Domingo'].map(d => <option key={d} value={d}>{d}</option>)}
                     </select>
-                    <input required type="time" value={formData.time} onChange={(e) => setFormData({...formData, time: e.target.value})} className="w-full bg-surface-dark border border-white/10 rounded-default px-4 py-3 text-text-primary outline-none" />
+                    <input required type="time" value={formData.time} onChange={(e) => setFormData({...formData, time: e.target.value})} className="w-full bg-surface-dark border border-white/10 rounded-default px-4 py-3 text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60" />
                   </div>
                   <div className="flex gap-4">
                     <label className="flex items-center gap-2 text-sm text-text-muted cursor-pointer"><input type="radio" checked={!formData.isOnline} onChange={() => setFormData({...formData, isOnline: false, locationUrl: ''})} name="type"/> Presencial</label>
                     <label className="flex items-center gap-2 text-sm text-text-muted cursor-pointer"><input type="radio" checked={formData.isOnline} onChange={() => setFormData({...formData, isOnline: true, locationUrl: ''})} name="type"/> Online</label>
                   </div>
-                  <input type="text" value={formData.locationUrl || ''} onChange={(e) => setFormData({...formData, locationUrl: e.target.value})} placeholder={formData.isOnline ? "Link do Meet/Zoom" : "Endereço Físico"} className="w-full bg-surface-dark border border-white/10 rounded-default px-4 py-3 text-text-primary outline-none" />
-                  <textarea value={formData.description || ''} onChange={(e) => setFormData({...formData, description: e.target.value})} placeholder="Descrição do grupo / Público alvo" rows="3" className="w-full bg-surface-dark border border-white/10 rounded-default px-4 py-3 text-text-primary outline-none" />
+                  <input type="text" value={formData.locationUrl || ''} onChange={(e) => setFormData({...formData, locationUrl: e.target.value})} placeholder={formData.isOnline ? "Link do Meet/Zoom" : "Endereço Físico"} className="w-full bg-surface-dark border border-white/10 rounded-default px-4 py-3 text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60" />
+                  <textarea value={formData.description || ''} onChange={(e) => setFormData({...formData, description: e.target.value})} placeholder="Descrição do grupo / Público alvo" rows="3" className="w-full bg-surface-dark border border-white/10 rounded-default px-4 py-3 text-text-primary outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60" />
                   <button type="submit" className="w-full bg-brand-primary text-white py-3 rounded-default font-bold hover:bg-brand-secondary transition-all flex items-center justify-center gap-2">
                     <Save className="w-4 h-4"/> Guardar Alterações
                   </button>
@@ -331,7 +419,7 @@ const LinksModule = ({ user, showNotification }) => {
                           <div className="space-y-2">
                             {pending.map(req => (
                               <div key={req.id} className="flex justify-between items-center bg-surface-card p-3 rounded-md border border-white/5">
-                                <span className="text-sm font-semibold text-text-primary">{req.user?.name || 'Utilizador'}</span>
+                                <span className="flex items-center gap-2 text-sm font-semibold text-text-primary"><Avatar name={req.user?.name} src={req.user?.profileImage} size={28} /> {req.user?.name || 'Utilizador'}</span>
                                 <div className="flex gap-2">
                                   <button onClick={() => handleApproveReject(req.id, link.id, 'RECUSADO')} className="p-2 rounded-md hover:bg-red-500/20 text-red-400 transition-colors"><X className="w-4 h-4"/></button>
                                   <button onClick={() => handleApproveReject(req.id, link.id, 'APROVADO')} className="p-2 rounded-md hover:bg-green-500/20 text-green-400 transition-colors"><CheckCircle className="w-4 h-4"/></button>
@@ -381,10 +469,10 @@ const LinksModule = ({ user, showNotification }) => {
                     {isPending ? (
                       <div className="space-y-2">
                         <button disabled className="w-full bg-surface-dark border border-amber-500/30 text-amber-400 py-2.5 rounded-default text-sm font-semibold cursor-not-allowed flex items-center justify-center gap-1.5"><Clock className="w-4 h-4"/> Pendente</button>
-                        <button onClick={() => requestCancelParticipation(link)} className="w-full bg-transparent border border-red-500/20 text-red-400/80 py-2 rounded-default text-xs font-semibold hover:bg-red-500/10 hover:text-red-400 transition-all outline-none">Cancelar Solicitação</button>
+                        <button onClick={() => requestCancelParticipation(link)} className="w-full bg-transparent border border-red-500/20 text-red-400/80 py-2 rounded-default text-xs font-semibold hover:bg-red-500/10 hover:text-red-400 transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Cancelar Solicitação</button>
                       </div>
                     ) : (
-                      <button onClick={() => handleRequestParticipation(link)} disabled={disableRequest} className={`w-full py-2.5 rounded-default text-sm font-semibold transition-all outline-none ${disableRequest ? 'bg-surface-dark border border-white/5 text-text-muted/50 cursor-not-allowed' : 'bg-surface-dark border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-white'}`}>Solicitar Entrada</button>
+                      <button onClick={() => handleRequestParticipation(link)} disabled={disableRequest} className={`w-full py-2.5 rounded-default text-sm font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${disableRequest ? 'bg-surface-dark border border-white/5 text-text-muted/50 cursor-not-allowed' : 'bg-surface-dark border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-white'}`}>Solicitar Entrada</button>
                     )}
                   </div>
                 );
@@ -395,7 +483,7 @@ const LinksModule = ({ user, showNotification }) => {
       )}
 
       {selectedLink && (
-        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedLink(null)}>
+        <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedLink(null)}>
           <div className="bg-surface-card border border-white/10 rounded-default shadow-2xl max-w-2xl w-full overflow-hidden flex flex-col max-h-[85vh]" onClick={(e) => e.stopPropagation()}>
             <div className="p-6 border-b border-white/10 bg-gradient-to-b from-brand-primary/10 to-transparent shrink-0">
               <div className="flex justify-between items-start">
@@ -430,7 +518,7 @@ const LinksModule = ({ user, showNotification }) => {
                     <div className="flex flex-wrap gap-2">
                       {selectedLinkMembers.map(m => (
                         <div key={m.id} className="flex items-center gap-2 bg-surface-dark border border-white/5 px-3 py-1.5 rounded-full text-xs font-semibold text-text-primary" title={m.user?.name || ''}>
-                          <div className="w-5 h-5 rounded-full bg-brand-primary/20 text-brand-primary flex items-center justify-center font-bold text-[10px]">{m.user?.name?.charAt(0) || 'U'}</div>{m.user?.name?.split(' ')[0] || 'Usuário'}
+                          <Avatar name={m.user?.name} src={m.user?.profileImage} size={20} />{m.user?.name?.split(' ')[0] || 'Usuário'}
                         </div>
                       ))}
                       {selectedLinkMembers.length === 0 && !isLoadingMembers && <span className="text-xs text-text-muted italic">Nenhum membro aprovado ainda.</span>}
@@ -439,7 +527,7 @@ const LinksModule = ({ user, showNotification }) => {
                   
                   {selectedLink.leaderId !== user?.id && myParticipations[selectedLink.id] === 'APROVADO' && (
                     <div className="pt-6 flex justify-center">
-                      <button onClick={() => setLinkToCancel(selectedLink)} className="text-xs text-text-muted hover:text-text-primary underline decoration-white/20 underline-offset-4 transition-colors outline-none">Solicitar desligamento do grupo</button>
+                      <button onClick={() => setLinkToCancel(selectedLink)} className="text-xs text-text-muted hover:text-text-primary underline decoration-white/20 underline-offset-4 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Solicitar desligamento do grupo</button>
                     </div>
                   )}
                 </div>
@@ -448,7 +536,24 @@ const LinksModule = ({ user, showNotification }) => {
               {activeModalTab === 'mural' && (
                 <div className="space-y-8 animate-in fade-in duration-200">
                   <form onSubmit={handlePostMessage} className="bg-surface-dark border border-white/10 rounded-default p-4 shadow-sm">
-                    <textarea value={newMsgContent} onChange={(e) => setNewMsgContent(e.target.value)} placeholder="O que deseja partilhar com o Link?" className="w-full bg-surface-card border border-white/5 rounded-md px-4 py-3 text-sm text-text-primary focus:outline-none focus:border-brand-primary transition-colors resize-none min-h-[80px]" required />
+                    <textarea value={newMsgContent} onChange={(e) => setNewMsgContent(e.target.value)} placeholder={isPoll ? "Qual é a pergunta da enquete?" : "O que deseja partilhar com o Link?"} className="w-full bg-surface-card border border-white/5 rounded-md px-4 py-3 text-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 focus:border-brand-primary transition-colors resize-none min-h-[80px]" required />
+
+                    {isPoll && (
+                      <div className="mt-3 space-y-2 animate-in fade-in duration-200">
+                        {pollOptions.map((opt, i) => (
+                          <div key={i} className="flex items-center gap-2">
+                            <input type="text" value={opt} onChange={(e) => setPollOptions(prev => prev.map((o, idx) => idx === i ? e.target.value : o))} placeholder={`Opção ${i + 1}`} maxLength={80} className="flex-1 bg-surface-card border border-white/5 rounded-md px-3 py-2 text-sm text-text-primary focus:outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 focus:border-brand-primary transition-colors" />
+                            {pollOptions.length > 2 && (
+                              <button type="button" onClick={() => setPollOptions(prev => prev.filter((_, idx) => idx !== i))} aria-label="Remover opção" className="p-2 rounded-md text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors"><X className="w-4 h-4" /></button>
+                            )}
+                          </div>
+                        ))}
+                        {pollOptions.length < 6 && (
+                          <button type="button" onClick={() => setPollOptions(prev => [...prev, ''])} className="flex items-center gap-1.5 text-xs font-semibold text-brand-primary hover:text-brand-secondary transition-colors"><Plus className="w-3.5 h-3.5" /> Adicionar opção</button>
+                        )}
+                      </div>
+                    )}
+
                     <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-4 gap-4">
                       <div className="flex flex-wrap gap-2">
                         {TIMELINE_CATEGORIES.map(cat => {
@@ -459,6 +564,9 @@ const LinksModule = ({ user, showNotification }) => {
                             </button>
                           );
                         })}
+                        <button type="button" onClick={() => setIsPoll(v => !v)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-semibold transition-all ${isPoll ? 'bg-brand-primary/20 border-brand-primary/40 text-brand-primary border ring-1 ring-current' : 'bg-surface-card border border-white/5 text-text-muted hover:text-white'}`}>
+                          <BarChart3 className="w-3.5 h-3.5" /> Enquete
+                        </button>
                       </div>
                       <button type="submit" disabled={!newMsgContent.trim() || isPostingMsg} className="flex items-center gap-2 bg-brand-primary text-white px-5 py-2 rounded-default text-sm font-bold hover:bg-brand-secondary transition-all disabled:opacity-50 w-full sm:w-auto justify-center">
                         {isPostingMsg ? 'A publicar...' : <><Send className="w-4 h-4" /> Partilhar</>}
@@ -492,6 +600,8 @@ const LinksModule = ({ user, showNotification }) => {
                                     </div>
                                     <div className="mb-2"><span className={`text-[9px] font-bold uppercase tracking-wider ${catInfo.color}`}>{catInfo.label}</span></div>
                                     <p className="text-sm text-text-primary leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                                    {renderPoll(msg)}
+                                    {renderReactions(msg)}
                                   </div>
                                 </div>
                               );
@@ -515,6 +625,8 @@ const LinksModule = ({ user, showNotification }) => {
                                 </div>
                                 <div className="mb-2"><span className={`text-[9px] font-bold uppercase tracking-wider ${catInfo.color}`}>{catInfo.label}</span></div>
                                 <p className="text-sm text-text-primary leading-relaxed whitespace-pre-wrap">{msg.content}</p>
+                                {renderPoll(msg)}
+                                {renderReactions(msg)}
                               </div>
                             </div>
                           );
@@ -530,7 +642,7 @@ const LinksModule = ({ user, showNotification }) => {
       )}
 
       {linkToCancel && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setLinkToCancel(null)}>
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-200" onClick={() => setLinkToCancel(null)}>
           <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in zoom-in-95 duration-200" onClick={(e) => e.stopPropagation()}>
             <div className="flex justify-center mb-4 text-amber-400"><div className="bg-amber-500/10 p-3 rounded-full"><AlertTriangle className="w-8 h-8" /></div></div>
             <h3 className="text-xl font-bold text-text-primary text-center mb-2">{myParticipations[linkToCancel.id] === 'APROVADO' ? 'Deseja sair do grupo?' : 'Cancelar Solicitação?'}</h3>
@@ -540,8 +652,8 @@ const LinksModule = ({ user, showNotification }) => {
                 : `Tem certeza que deseja cancelar sua solicitação para participar do Link "${linkToCancel.name}"?`}
             </p>
             <div className="flex gap-3 mt-6">
-              <button onClick={() => setLinkToCancel(null)} className="flex-1 px-4 py-2.5 rounded-default bg-surface-dark text-text-primary font-semibold hover:bg-white/5 transition-all outline-none">Voltar</button>
-              <button onClick={executeCancelParticipation} className="flex-1 px-4 py-2.5 rounded-default bg-red-500 hover:bg-red-600 text-white font-semibold transition-all outline-none">Confirmar</button>
+              <button onClick={() => setLinkToCancel(null)} className="flex-1 px-4 py-2.5 rounded-default bg-surface-dark text-text-primary font-semibold hover:bg-white/5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Voltar</button>
+              <button onClick={executeCancelParticipation} className="flex-1 px-4 py-2.5 rounded-default bg-red-500 hover:bg-red-600 text-white font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Confirmar</button>
             </div>
           </div>
         </div>

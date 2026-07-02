@@ -9,3 +9,18 @@
     @apply antialiased bg-surface-dark text-text-primary;
   }
 }
+
+/*
+  Android/Chrome: as animações de entrada (animate-in) usam translate3d e promovem
+  containers roláveis a camadas GPU que o navegador não repinta ao rolar, causando
+  "fantasmas"/carimbos do conteúdo. Desativamos os enter-animations no mobile
+  (onde o bug ocorre); no desktop as animações continuam. Também estabilizamos o
+  compositing das superfícies roláveis.
+*/
+@media (max-width: 767px) {
+  .animate-in,
+  [class*="animate-in"],
+  .animate-pulse {
+    animation: none !important;
+  }
+}

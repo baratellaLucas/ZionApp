@@ -1,11 +1,28 @@
 import React, { useState, useEffect } from 'react';
+import { apiFetch } from '../api';
+import Avatar from '../components/Avatar';
 import {
   CalendarDays, Coffee, Smile, Music, Megaphone, Briefcase, Clock,
   CheckCircle, GraduationCap, Users, MessageSquare, ShieldCheck,
-  Award, Gift, X, Save, BookOpen, Trash2, AlertTriangle
+  Award, Gift, X, Save, BookOpen, Trash2, AlertTriangle, Heart,
+  Send, Pin, BarChart3, Plus, Loader2
 } from 'lucide-react';
 
-const API_BASE = 'http://localhost:3000';
+// Categorias e emojis do mural da área (mesma lógica do mural de Links)
+const AREA_MURAL_CATS = [
+  { id: 'AVISO', label: 'Aviso', color: 'text-amber-400', bg: 'bg-amber-500/10', border: 'border-amber-500/20' },
+  { id: 'ESCALA', label: 'Escala', color: 'text-blue-400', bg: 'bg-blue-500/10', border: 'border-blue-500/20' },
+  { id: 'TREINO', label: 'Treino', color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' },
+  { id: 'GERAL', label: 'Geral', color: 'text-brand-primary', bg: 'bg-brand-primary/10', border: 'border-brand-primary/20' },
+];
+const MURAL_EMOJIS = ['🔥', '❤️', '🙏', '👏', '😂', '🙌'];
+
+
+// Área de intercessão: detecta pelo nome normalizado (sem acentos)
+const isIntercessionName = (name) => {
+  const n = (name || '').normalize('NFD').replace(new RegExp('[\\u0300-\\u036f]', 'g'), '').toLowerCase();
+  return n.includes('interce') || n.includes('interse');
+};
 
 // As áreas vêm do backend sem ícone/cor; aplicamos uma paleta visual por índice.
 const AREA_STYLES = [
@@ -18,7 +35,7 @@ const DEFAULT_AREA_STYLE = { Icon: Briefcase, color: 'text-brand-primary', bg: '
 
 const MAX_AREAS_PER_PERSON = 2;
 
-const VoluntariosModule = ({ user, setUser, showNotification }) => {
+const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHandled }) => {
   const [activeTab,        setActiveTab]        = useState('minhas_areas');
   // areas: catálogo vindo do backend (GET /api/areas)
   const [areas,            setAreas]            = useState([]);
@@ -32,23 +49,191 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
 
   const [shifts,           setShifts]           = useState([]);
   const [announcements,    setAnnouncements]    = useState([]);
+  const [areaRequests,     setAreaRequests]     = useState({}); // { areaId: [participações PENDENTE] }
+  const [areaApproved,     setAreaApproved]     = useState({}); // { areaId: [membros aprovados] }
+  const [areaShifts,       setAreaShifts]       = useState({}); // { areaId: [escalas] }
+  const [shiftDrafts,      setShiftDrafts]      = useState({}); // { areaId: { date, volunteerId } }
   const [isLoading,        setIsLoading]        = useState(true);
+  // Pedidos de oração (equipe de intercessão)
+  const [canViewPrayers,   setCanViewPrayers]   = useState(false);
+  const [prayers,          setPrayers]          = useState([]);
+  // Mural da área
+  const [muralMsgs,        setMuralMsgs]        = useState([]);
+  const [muralContent,     setMuralContent]     = useState('');
+  const [muralCat,         setMuralCat]         = useState('AVISO');
+  const [muralPoll,        setMuralPoll]        = useState(false);
+  const [muralOptions,     setMuralOptions]     = useState(['', '']);
+  const [muralPosting,     setMuralPosting]     = useState(false);
+  const [muralLoading,     setMuralLoading]     = useState(false);
+
+  const loadMural = async (areaId) => {
+    if (!areaId) return;
+    setMuralLoading(true);
+    try {
+      const res = await apiFetch(`/api/areas/${areaId}/messages`).catch(() => null);
+      if (res && res.ok) setMuralMsgs(await res.json());
+    } catch { /* ignora */ } finally { setMuralLoading(false); }
+  };
+  const handlePostMural = async (e) => {
+    e.preventDefault();
+    if (!muralContent.trim() || !selectedAreaId) return;
+    const opts = muralOptions.map(o => o.trim()).filter(Boolean);
+    if (muralPoll && opts.length < 2) { showNotification('Uma enquete precisa de pelo menos 2 opções.'); return; }
+    setMuralPosting(true);
+    const body = { content: muralContent.trim(), category: muralCat };
+    if (muralPoll) body.pollOptions = opts;
+    try {
+      const res = await apiFetch(`/api/areas/${selectedAreaId}/messages`, { method: 'POST', body });
+      if (res.ok) {
+        setMuralContent(''); setMuralPoll(false); setMuralOptions(['', '']);
+        showNotification(muralPoll ? 'Enquete publicada!' : 'Publicado no mural!');
+        loadMural(selectedAreaId);
+      } else { const d = await res.json().catch(() => ({})); showNotification(d.error || 'Não foi possível publicar.'); }
+    } catch { showNotification('Falha de rede ao publicar.'); }
+    finally { setMuralPosting(false); }
+  };
+  const handleMuralDelete = async (id) => {
+    try { await apiFetch(`/api/areas/messages/${id}`, { method: 'DELETE' }); setMuralMsgs(prev => prev.filter(m => m.id !== id)); showNotification('Mensagem apagada.'); }
+    catch { showNotification('Falha ao apagar.'); }
+  };
+  const handleMuralPin = async (id) => {
+    try { const res = await apiFetch(`/api/areas/messages/${id}/pin`, { method: 'PATCH' }); if (res.ok) loadMural(selectedAreaId); }
+    catch { showNotification('Falha ao fixar.'); }
+  };
+  const handleMuralReact = async (id, emoji) => {
+    setMuralMsgs(prev => prev.map(m => {
+      if (m.id !== id) return m;
+      const reactions = [...(m.reactions || [])];
+      const idx = reactions.findIndex(r => r.emoji === emoji);
+      if (idx >= 0) { const r = reactions[idx]; if (r.mine) { const c = r.count - 1; if (c <= 0) reactions.splice(idx, 1); else reactions[idx] = { ...r, count: c, mine: false }; } else reactions[idx] = { ...r, count: r.count + 1, mine: true }; }
+      else reactions.push({ emoji, count: 1, mine: true });
+      return { ...m, reactions };
+    }));
+    try { await apiFetch(`/api/areas/messages/${id}/react`, { method: 'POST', body: { emoji } }); } catch { /* ignora */ }
+  };
+  const handleMuralVote = async (id, optionIndex) => {
+    setMuralMsgs(prev => prev.map(m => {
+      if (m.id !== id || !m.poll) return m;
+      const prevVote = m.poll.myVote;
+      if (prevVote === optionIndex) return m;
+      const options = m.poll.options.map((o, i) => { let c = o.count; if (i === optionIndex) c++; if (i === prevVote) c--; return { ...o, count: c }; });
+      const totalVotes = prevVote === null || prevVote === undefined ? (m.poll.totalVotes || 0) + 1 : m.poll.totalVotes;
+      return { ...m, poll: { ...m.poll, options, myVote: optionIndex, totalVotes } };
+    }));
+    try { await apiFetch(`/api/areas/messages/${id}/vote`, { method: 'POST', body: { optionIndex } }); } catch { /* ignora */ }
+  };
+
+  const loadPrayers = async () => {
+    try {
+      const res = await apiFetch('/api/prayer-requests').catch(() => null);
+      if (res && res.ok) setPrayers(await res.json());
+    } catch { /* ignora */ }
+  };
+  const togglePrayer = async (id) => {
+    try {
+      const res = await apiFetch(`/api/prayer-requests/${id}`, { method: 'PATCH' });
+      if (res.ok) { const p = await res.json(); setPrayers(prev => prev.map(x => x.id === id ? { ...x, status: p.status } : x)); }
+    } catch { showNotification('Falha ao atualizar.'); }
+  };
+
+  // Lista de pedidos de oração (usada na aba Intercessão e no modal da área)
+  const renderPrayerList = () => (
+    prayers.length === 0 ? (
+      <div className="text-center text-text-muted py-10 bg-surface-dark border border-dashed border-white/10 rounded-default text-sm">Nenhum pedido de oração no momento. 🙏</div>
+    ) : (
+      <div className="space-y-3">
+        {prayers.map(p => (
+          <div key={p.id} className={`bg-surface-dark border rounded-default p-4 ${p.status === 'ORADO' ? 'border-emerald-500/20' : 'border-white/5'}`}>
+            <div className="flex justify-between items-start gap-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2 text-sm font-bold text-white"><Avatar name={p.user?.name} src={p.user?.profileImage} size={24}/> {p.user?.name || 'Membro'}</div>
+                <p className="text-sm text-text-secondary mt-2 whitespace-pre-wrap">{p.content}</p>
+                <div className="text-[11px] text-text-muted mt-2">{new Date(p.createdAt).toLocaleString('pt-BR')}</div>
+              </div>
+              <button onClick={() => togglePrayer(p.id)} className={`shrink-0 text-xs font-bold px-3 py-1.5 rounded-md border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${p.status === 'ORADO' ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' : 'text-pink-400 bg-pink-500/10 border-pink-500/30'}`}>
+                {p.status === 'ORADO' ? '✓ Orado' : 'Marcar orado'}
+              </button>
+            </div>
+          </div>
+        ))}
+      </div>
+    )
+  );
+
+  // Helpers do mural da área (reações + enquete)
+  const renderMuralPoll = (m) => {
+    if (!m.poll) return null;
+    const total = m.poll.totalVotes || 0;
+    return (
+      <div className="mt-3 space-y-2">
+        {m.poll.options.map((opt, i) => {
+          const pct = total > 0 ? Math.round((opt.count / total) * 100) : 0;
+          const mine = m.poll.myVote === i;
+          return (
+            <button key={i} type="button" onClick={() => handleMuralVote(m.id, i)} className={`relative w-full text-left rounded-md border overflow-hidden transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${mine ? 'border-brand-primary' : 'border-white/10 hover:border-white/20'}`}>
+              <div className="absolute inset-y-0 left-0 bg-brand-primary/20 transition-all" style={{ width: `${pct}%` }}></div>
+              <div className="relative flex justify-between items-center px-3 py-2 text-sm gap-2">
+                <span className={`font-medium ${mine ? 'text-brand-primary' : 'text-text-primary'}`}>{mine ? '✓ ' : ''}{opt.text}</span>
+                <span className="text-xs text-text-muted shrink-0">{pct}% · {opt.count}</span>
+              </div>
+            </button>
+          );
+        })}
+        <div className="text-[10px] text-text-muted">{total} voto{total !== 1 ? 's' : ''}</div>
+      </div>
+    );
+  };
+  const renderMuralReactions = (m) => (
+    <div className="flex flex-wrap items-center gap-1.5 mt-3">
+      {(m.reactions || []).map(r => (
+        <button key={r.emoji} type="button" onClick={() => handleMuralReact(m.id, r.emoji)} className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-xs border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${r.mine ? 'bg-brand-primary/20 border-brand-primary/40 text-brand-primary' : 'bg-surface-card border-white/10 text-text-muted hover:border-white/20'}`}>
+          <span>{r.emoji}</span><span className="font-semibold">{r.count}</span>
+        </button>
+      ))}
+      <div className="relative group/react">
+        <button type="button" aria-label="Reagir" className="flex items-center justify-center w-7 h-7 rounded-full bg-surface-card border border-white/10 text-text-muted hover:text-white hover:border-white/20 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Smile className="w-3.5 h-3.5" /></button>
+        <div className="absolute z-10 bottom-full left-0 mb-1 hidden group-hover/react:flex group-focus-within/react:flex gap-1 bg-surface-card border border-white/10 rounded-full px-2 py-1 shadow-lg">
+          {MURAL_EMOJIS.map(e => (
+            <button key={e} type="button" onClick={() => handleMuralReact(m.id, e)} className="hover:scale-125 transition-transform text-sm outline-none rounded">{e}</button>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+
+  // Ação vinda de uma notificação (ex: "Você foi escalado") → garante a aba "Minhas Áreas"
+  useEffect(() => {
+    if (!intent) return;
+    if (intent === 'escala') setActiveTab('minhas_areas');
+    onIntentHandled?.();
+  }, [intent]);
 
   // ─── fetch de áreas, participações, escalas e comunicados ─────────────────
   useEffect(() => {
     const fetchData = async () => {
       try {
         const query = user?.id ? `?userId=${user.id}` : '';
-        const [resAreas, resMine, resShifts, resAnn] = await Promise.all([
-          fetch(`${API_BASE}/api/areas`).catch(() => null),
-          user?.id ? fetch(`${API_BASE}/api/areas/my-participations?userId=${user.id}`).catch(() => null) : null,
-          fetch(`${API_BASE}/api/shifts${query}`).catch(() => null),
-          fetch(`${API_BASE}/api/announcements?type=VOLUNTARIO`).catch(() => null),
+        const [resAreas, resMine, resShifts, resAnn, resPoints, resPray] = await Promise.all([
+          apiFetch(`/api/areas`).catch(() => null),
+          user?.id ? apiFetch(`/api/areas/my-participations?userId=${user.id}`).catch(() => null) : null,
+          apiFetch(`/api/shifts${query}`).catch(() => null),
+          apiFetch(`/api/announcements?type=VOLUNTARIO`).catch(() => null),
+          apiFetch(`/api/points/mine`).catch(() => null),
+          apiFetch(`/api/prayer-requests/access`).catch(() => null),
         ]);
         if (resAreas && resAreas.ok) setAreas(await resAreas.json());
         if (resMine && resMine.ok) setMyAreas(await resMine.json());
         if (resShifts && resShifts.ok) setShifts(await resShifts.json());
         if (resAnn && resAnn.ok) setAnnouncements(await resAnn.json());
+        if (resPoints && resPoints.ok) {
+          const awards = await resPoints.json();
+          if (awards.some(a => a.ruleKey === 'TRAINING_COMPLETION')) setTrainingProgress(100);
+        }
+        if (resPray && resPray.ok) {
+          const { canView } = await resPray.json();
+          setCanViewPrayers(!!canView);
+          if (canView) loadPrayers();
+        }
       } catch (e) {
         console.error(e);
       } finally {
@@ -57,6 +242,57 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
     };
     fetchData();
   }, [user?.id]);
+
+  // Busca solicitações, membros aprovados e escalas das áreas que o usuário lidera
+  const loadLeaderArea = async (areaId) => {
+    try {
+      const [resP, resS] = await Promise.all([
+        apiFetch(`/api/areas/${areaId}/participations`).catch(() => null),
+        apiFetch(`/api/areas/${areaId}/shifts`).catch(() => null),
+      ]);
+      if (resP && resP.ok) {
+        const parts = await resP.json();
+        setAreaRequests(prev => ({ ...prev, [areaId]: parts.filter(p => p.status === 'PENDENTE') }));
+        setAreaApproved(prev => ({ ...prev, [areaId]: parts.filter(p => p.status === 'APROVADO').map(p => p.user).filter(Boolean) }));
+      }
+      if (resS && resS.ok) { const s = await resS.json(); setAreaShifts(prev => ({ ...prev, [areaId]: s })); }
+    } catch { /* ignora */ }
+  };
+  useEffect(() => {
+    if (activeTab !== 'minhas_areas' || !user?.id) return;
+    areas.filter(a => a.leaderId === user.id).forEach(a => loadLeaderArea(a.id));
+  }, [activeTab, areas, user?.id]);
+
+  // Aprovar / recusar solicitação de participação na área
+  const handleApproveRejectArea = async (participationId, areaId, status) => {
+    try {
+      const res = await apiFetch(`/api/areas/participations/${participationId}`, { method: 'PATCH', body: { status } });
+      if (res.ok) {
+        showNotification(`Voluntário ${status === 'APROVADO' ? 'aprovado' : 'recusado'}!`);
+        setAreaRequests(prev => ({ ...prev, [areaId]: (prev[areaId] || []).filter(p => p.id !== participationId) }));
+        if (status === 'APROVADO') loadLeaderArea(areaId); // atualiza lista de aprovados p/ escalar
+      } else throw new Error();
+    } catch {
+      showNotification('Falha ao processar a solicitação.');
+    }
+  };
+
+  const setDraft = (areaId, patch) => setShiftDrafts(prev => ({ ...prev, [areaId]: { ...(prev[areaId] || {}), ...patch } }));
+  const handleCreateShift = async (areaId) => {
+    const d = shiftDrafts[areaId] || {};
+    if (!d.date) return showNotification('Informe a data da escala.');
+    try {
+      const res = await apiFetch(`/api/areas/${areaId}/shifts`, { method: 'POST', body: { date: new Date(d.date).toISOString(), volunteerId: d.volunteerId || null } });
+      if (res.ok) { setShiftDrafts(prev => ({ ...prev, [areaId]: { date: '', volunteerId: '' } })); loadLeaderArea(areaId); showNotification('Escala criada!'); }
+      else { const e = await res.json().catch(() => ({})); showNotification(e.error || 'Falha ao criar escala.'); }
+    } catch { showNotification('Falha de rede.'); }
+  };
+  const handleDeleteShift = async (shiftId, areaId) => {
+    try {
+      const res = await apiFetch(`/api/shifts/${shiftId}`, { method: 'DELETE' });
+      if (res.ok) setAreaShifts(prev => ({ ...prev, [areaId]: (prev[areaId] || []).filter(s => s.id !== shiftId) }));
+    } catch { showNotification('Falha de rede.'); }
+  };
 
   // Só comunicados do tipo VOLUNTARIO aparecem aqui
   const volAnnouncement = announcements.filter(a => a.type === 'VOLUNTARIO')[0] || null;
@@ -75,6 +311,14 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
   const activeAreaCount   = myAreas.filter(p => p.status === 'PENDENTE' || p.status === 'APROVADO').length;
   const reachedAreaLimit  = activeAreaCount >= MAX_AREAS_PER_PERSON;
 
+  // Áreas que o usuário lidera (entra direto em "Minhas Áreas", sem solicitar)
+  const ledAreas = areas.filter(a => a.leaderId === user?.id);
+  // Itens de "Minhas Áreas": áreas lideradas + participações (sem duplicar as lideradas)
+  const myAreaItems = [
+    ...ledAreas.map(a => ({ id: `lead-${a.id}`, areaId: a.id, area: a, status: 'APROVADO', role: 'Líder da Área', isLeader: true })),
+    ...myAreas.filter(p => !ledAreas.some(a => a.id === p.areaId)),
+  ];
+
   const futureShifts = shifts.filter(s => new Date(s.date) >= new Date());
 
   const formatData = (dateString) => {
@@ -91,18 +335,14 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
 
   const handleConfirmShift = async (shiftId) => {
     try {
-      const res = await fetch(`http://localhost:3000/api/shifts/${shiftId}/confirm`, { method: 'PATCH' }).catch(() => null);
-      if (res && res.ok) {
+      const res = await apiFetch(`/api/shifts/${shiftId}/confirm`, { method: 'PATCH' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
         setShifts(prev => prev.map(s => s.id === shiftId ? { ...s, status: 'Confirmado' } : s));
-        setUser(prev => ({ ...prev, points: prev.points + 50 }));
-        showNotification('Escala confirmada! Você ganhou +50 Zion Points! 🎉');
-      } else {
-        // Modo offline: actualiza localmente mesmo sem resposta do servidor
-        setShifts(prev => prev.map(s => s.id === shiftId ? { ...s, status: 'Confirmado' } : s));
-        setUser(prev => ({ ...prev, points: prev.points + 50 }));
-        showNotification('Escala confirmada (Modo Offline)! +50 Zion Points! 🎉');
-      }
-    } catch (e) {
+        setUser(prev => ({ ...prev, points: data.points ?? prev.points }));
+        showNotification(data.awarded ? `Escala confirmada! Você ganhou +${data.awarded} Zion Points! 🎉` : 'Escala confirmada!');
+      } else throw new Error();
+    } catch {
       setShifts(prev => prev.map(s => s.id === shiftId ? { ...s, status: 'Confirmado' } : s));
       showNotification('Escala confirmada (Modo Offline)!');
     }
@@ -124,7 +364,7 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
     // Otimista: mostra como pendente imediatamente
     setMyAreas(prev => [...prev, { id: tempId, areaId, status: 'PENDENTE', role: 'Aguardando Avaliação', area }]);
     try {
-      const res = await fetch(`${API_BASE}/api/areas/${areaId}/request`, {
+      const res = await apiFetch(`/api/areas/${areaId}/request`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user.id })
       });
       if (res.ok) {
@@ -147,7 +387,7 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
     setAreaToCancel(null);
     setMyAreas(prev => prev.filter(p => p.id !== participation.id));
     try {
-      await fetch(`${API_BASE}/api/areas/${participation.areaId}/request`, {
+      await apiFetch(`/api/areas/${participation.areaId}/request`, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user?.id })
       });
       showNotification('Solicitação cancelada.');
@@ -159,6 +399,19 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
   const openAreaModal = (areaId) => {
     setSelectedAreaId(areaId);
     setModalTab('escalas');
+    setMuralMsgs([]);
+    // Carrega a equipe real (membros aprovados) para a aba "Equipe"
+    loadAreaTeam(areaId);
+  };
+
+  const loadAreaTeam = async (areaId) => {
+    try {
+      const res = await apiFetch(`/api/areas/${areaId}/participations`).catch(() => null);
+      if (res && res.ok) {
+        const parts = await res.json();
+        setAreaApproved(prev => ({ ...prev, [areaId]: parts.filter(p => p.status === 'APROVADO').map(p => ({ ...p.user, role: p.role })).filter(Boolean) }));
+      }
+    } catch { /* ignora */ }
   };
 
   // ─── render ──────────────────────────────────────────────────────────────
@@ -190,6 +443,8 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
           ) : (
           <div className="grid gap-4 md:grid-cols-2">
             {areas.map(area => {
+              // Líder não solicita entrada na própria área (já aparece em "Minhas Áreas")
+              if (area.leaderId === user?.id) return null;
               const { Icon, color, bg } = styleForAreaId(area.id);
               const myParticipation = myAreas.find(m => m.areaId === area.id);
               const disableRequest  = reachedAreaLimit && !myParticipation;
@@ -212,7 +467,7 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
                       {/* FIX: chama requestCancelArea que abre o modal interno */}
                       <button
                         onClick={() => requestCancelArea(myParticipation)}
-                        className="text-xs text-text-muted hover:text-red-400 underline decoration-white/10 hover:decoration-red-400/30 underline-offset-2 text-center transition-colors outline-none"
+                        className="text-xs text-text-muted hover:text-red-400 underline decoration-white/10 hover:decoration-red-400/30 underline-offset-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"
                       >
                         Cancelar solicitação
                       </button>
@@ -222,7 +477,7 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
                       onClick={() => handleRequestArea(area.id)}
                       disabled={disableRequest}
                       title={disableRequest ? `Limite de ${MAX_AREAS_PER_PERSON} áreas atingido` : undefined}
-                      className="w-full mt-2 py-2.5 rounded-default text-sm font-semibold transition-all outline-none bg-surface-dark border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full mt-2 py-2.5 rounded-default text-sm font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 bg-surface-dark border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Solicitar Entrada
                     </button>
@@ -250,46 +505,111 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
             </div>
           )}
 
-          {myAreas.length === 0 ? (
+          {myAreaItems.length === 0 ? (
             <div className="text-center text-text-muted py-10 bg-surface-card rounded-default border border-dashed border-white/10">Você ainda não faz parte de nenhuma área. Explore as opções!</div>
           ) : (
             <div className="space-y-3">
-              {myAreas.map((myArea) => {
+              {myAreaItems.map((myArea) => {
                 const areaDetails = myArea.area || areas.find(a => a.id === myArea.areaId);
                 if (!areaDetails) return null;
                 const { Icon, color, bg } = styleForAreaId(myArea.areaId);
+                const isLeader = myArea.isLeader;
                 const isApproved = myArea.status === 'APROVADO';
+                const pending = isLeader ? (areaRequests[areaDetails.id] || []) : [];
                 return (
-                  <div key={myArea.id} className={`bg-surface-card p-4 rounded-default border transition-all flex flex-col sm:flex-row justify-between items-center gap-4 shadow-level-2 ${isApproved ? 'border-brand-primary/30' : 'border-white/5'}`}>
-                    <div className="flex items-center gap-4 w-full sm:w-auto">
-                      <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${bg} ${color}`}><Icon className="w-6 h-6"/></div>
-                      <div>
-                        <h3 className="font-display font-bold text-lg text-text-primary">{areaDetails.name}</h3>
-                        <div className="text-sm text-text-muted font-medium flex items-center gap-1 mt-0.5">
-                          <Briefcase className="w-3.5 h-3.5"/> Posição: <span className="text-white/80">{myArea.role}</span>
+                  <div key={myArea.id} className={`bg-surface-card rounded-default border overflow-hidden shadow-level-2 ${(isApproved || isLeader) ? 'border-brand-primary/30' : 'border-white/5'}`}>
+                    <div className="p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
+                      <div className="flex items-center gap-4 w-full sm:w-auto">
+                        <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${bg} ${color}`}><Icon className="w-6 h-6"/></div>
+                        <div>
+                          <h3 className="font-display font-bold text-lg text-text-primary flex items-center gap-2">
+                            {areaDetails.name}
+                            {isLeader && <span className="text-[9px] bg-brand-primary/20 text-brand-primary px-2 py-0.5 rounded-full uppercase tracking-wider font-bold">Líder</span>}
+                          </h3>
+                          <div className="text-sm text-text-muted font-medium flex items-center gap-1 mt-0.5">
+                            <Briefcase className="w-3.5 h-3.5"/> Posição: <span className="text-white/80">{myArea.role}</span>
+                          </div>
                         </div>
                       </div>
-                    </div>
 
-                    {isApproved ? (
-                      <div className="flex flex-col gap-2 w-full sm:w-auto">
-                        <button onClick={() => openAreaModal(areaDetails.id)} className="w-full sm:w-auto bg-surface-dark border border-brand-primary/30 text-brand-primary px-6 py-2.5 rounded-default text-sm font-semibold hover:bg-brand-primary hover:text-white transition-all outline-none">
+                      {isLeader ? (
+                        <button onClick={() => openAreaModal(areaDetails.id)} className="w-full sm:w-auto bg-surface-dark border border-brand-primary/30 text-brand-primary px-6 py-2.5 rounded-default text-sm font-semibold hover:bg-brand-primary hover:text-white transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
                           Acessar Área
                         </button>
-                        <button onClick={() => requestCancelArea(myArea)} className="text-xs text-text-muted hover:text-red-400 underline decoration-white/10 hover:decoration-red-400/30 underline-offset-2 text-center outline-none transition-colors">
-                          Sair da área
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="flex flex-col gap-2 w-full sm:w-auto">
-                        <span className="flex items-center justify-center gap-1.5 text-amber-400 text-sm font-bold bg-amber-500/10 border border-amber-500/20 px-5 py-2.5 rounded-default">
-                          <Clock className="w-4 h-4"/> Avaliação Pendente
-                        </span>
-                        <button onClick={() => requestCancelArea(myArea)} className="text-xs text-text-muted hover:text-red-400 underline decoration-white/10 hover:decoration-red-400/30 underline-offset-2 text-center outline-none transition-colors">
-                          Cancelar solicitação
-                        </button>
+                      ) : isApproved ? (
+                        <div className="flex flex-col gap-2 w-full sm:w-auto">
+                          <button onClick={() => openAreaModal(areaDetails.id)} className="w-full sm:w-auto bg-surface-dark border border-brand-primary/30 text-brand-primary px-6 py-2.5 rounded-default text-sm font-semibold hover:bg-brand-primary hover:text-white transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                            Acessar Área
+                          </button>
+                          <button onClick={() => requestCancelArea(myArea)} className="text-xs text-text-muted hover:text-red-400 underline decoration-white/10 hover:decoration-red-400/30 underline-offset-2 text-center outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 transition-colors">
+                            Sair da área
+                          </button>
+                        </div>
+                      ) : (
+                        <div className="flex flex-col gap-2 w-full sm:w-auto">
+                          <span className="flex items-center justify-center gap-1.5 text-amber-400 text-sm font-bold bg-amber-500/10 border border-amber-500/20 px-5 py-2.5 rounded-default">
+                            <Clock className="w-4 h-4"/> Avaliação Pendente
+                          </span>
+                          <button onClick={() => requestCancelArea(myArea)} className="text-xs text-text-muted hover:text-red-400 underline decoration-white/10 hover:decoration-red-400/30 underline-offset-2 text-center outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 transition-colors">
+                            Cancelar solicitação
+                          </button>
+                        </div>
+                      )}
+                    </div>
+
+                    {isLeader && (
+                      <div className="p-4 border-t border-white/5 bg-surface-dark/30">
+                        <h4 className="text-sm font-bold text-text-primary mb-3 flex items-center gap-2"><Users className="w-4 h-4"/> Solicitações de Entrada ({pending.length})</h4>
+                        {pending.length === 0 ? (
+                          <p className="text-xs text-text-muted italic">Não há pedidos pendentes no momento.</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {pending.map(req => (
+                              <div key={req.id} className="flex justify-between items-center bg-surface-card p-3 rounded-md border border-white/5">
+                                <span className="flex items-center gap-2 text-sm font-semibold text-text-primary"><Avatar name={req.user?.name} src={req.user?.profileImage} size={28} /> {req.user?.name || 'Voluntário'}</span>
+                                <div className="flex gap-2">
+                                  <button onClick={() => handleApproveRejectArea(req.id, areaDetails.id, 'RECUSADO')} className="p-2 rounded-md hover:bg-red-500/20 text-red-400 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-4 h-4"/></button>
+                                  <button onClick={() => handleApproveRejectArea(req.id, areaDetails.id, 'APROVADO')} className="p-2 rounded-md hover:bg-green-500/20 text-green-400 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><CheckCircle className="w-4 h-4"/></button>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        )}
                       </div>
                     )}
+
+                    {isLeader && (() => {
+                      const sh = areaShifts[areaDetails.id] || [];
+                      const approved = areaApproved[areaDetails.id] || [];
+                      const draft = shiftDrafts[areaDetails.id] || {};
+                      return (
+                        <div className="p-4 border-t border-white/5 bg-surface-dark/30">
+                          <h4 className="text-sm font-bold text-text-primary mb-3 flex items-center gap-2"><CalendarDays className="w-4 h-4"/> Escalas ({sh.length})</h4>
+                          <div className="space-y-2 mb-3">
+                            {sh.length === 0 ? <p className="text-xs text-text-muted italic">Nenhuma escala criada.</p> : sh.map(s => (
+                              <div key={s.id} className="flex justify-between items-center bg-surface-card p-2.5 rounded-md border border-white/5 text-sm">
+                                <div className="flex items-center gap-2 min-w-0">
+                                  <Avatar name={s.user?.name || '?'} src={s.user?.profileImage} size={26} />
+                                  <div className="min-w-0">
+                                    <div className="text-white truncate">{s.user?.name || 'Vaga aberta'}</div>
+                                    <div className="text-xs text-text-muted">{new Date(s.date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} • {s.status}</div>
+                                  </div>
+                                </div>
+                                <button onClick={() => handleDeleteShift(s.id, areaDetails.id)} title="Remover" className="p-1.5 rounded-md text-text-muted hover:text-red-400 hover:bg-red-500/10 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Trash2 className="w-4 h-4"/></button>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="flex flex-col sm:flex-row gap-2">
+                            <input type="datetime-local" value={draft.date || ''} onChange={e => setDraft(areaDetails.id, { date: e.target.value })} className="flex-1 bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 [color-scheme:dark]" />
+                            <select value={draft.volunteerId || ''} onChange={e => setDraft(areaDetails.id, { volunteerId: e.target.value })} className="bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                              <option value="">Vaga aberta</option>
+                              {approved.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                            </select>
+                            <button onClick={() => handleCreateShift(areaDetails.id)} className="bg-brand-primary text-white px-4 py-2 rounded-md font-bold text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Escalar</button>
+                          </div>
+                        </div>
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -300,7 +620,7 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
 
       {/* ── MODAL DA ÁREA ─────────────────────────────────────────────────── */}
       {selectedAreaId && activeAreaDetails && (
-        <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedAreaId(null)}>
+        <div className="fixed inset-0 z-[100] bg-black/80 flex items-center justify-center p-4 animate-in fade-in duration-200" onClick={() => setSelectedAreaId(null)}>
           <div className="bg-surface-card border border-white/10 rounded-default shadow-2xl max-w-3xl w-full flex flex-col max-h-[90vh]" onClick={e => e.stopPropagation()}>
 
             {/* Header do modal */}
@@ -315,7 +635,7 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
                     <p className="text-sm text-text-muted">{activeAreaDetails.description}</p>
                   </div>
                 </div>
-                <button onClick={() => setSelectedAreaId(null)} className="p-2 bg-white/5 hover:bg-white/10 rounded-full text-text-muted hover:text-white transition-colors outline-none"><X className="w-5 h-5"/></button>
+                <button onClick={() => setSelectedAreaId(null)} className="p-2 bg-white/5 hover:bg-white/10 rounded-full text-text-muted hover:text-white transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-5 h-5"/></button>
               </div>
               <div className="flex gap-4 mt-6 border-b border-white/10 overflow-x-auto no-scrollbar">
                 {[
@@ -323,8 +643,10 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
                   { id: 'treinamentos', label: 'Treinamentos' },
                   { id: 'equipe',       label: 'Equipe' },
                   { id: 'mural',        label: 'Mural' },
+                  // Pedidos de oração: só na área de Intercessão e para quem pode ver
+                  ...(isIntercessionName(activeAreaDetails.name) && canViewPrayers ? [{ id: 'oracoes', label: '🙏 Pedidos de Oração' }] : []),
                 ].map(t => (
-                  <button key={t.id} onClick={() => setModalTab(t.id)} className={`pb-2 text-sm font-semibold whitespace-nowrap transition-colors outline-none ${modalTab === t.id ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}>
+                  <button key={t.id} onClick={() => { setModalTab(t.id); if (t.id === 'oracoes') loadPrayers(); if (t.id === 'mural') loadMural(selectedAreaId); }} className={`pb-2 text-sm font-semibold whitespace-nowrap transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${modalTab === t.id ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}>
                     {t.label}
                   </button>
                 ))}
@@ -333,6 +655,16 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
 
             {/* Conteúdo do modal */}
             <div className="p-6 overflow-y-auto">
+
+              {/* TAB: PEDIDOS DE ORAÇÃO (área de Intercessão) */}
+              {modalTab === 'oracoes' && canViewPrayers && (
+                <div className="space-y-4 animate-in fade-in">
+                  <div className="flex items-center gap-2 bg-pink-500/10 border border-pink-500/20 rounded-default px-4 py-3 text-sm text-pink-200">
+                    <Heart className="w-4 h-4 shrink-0"/> Pedidos de oração da comunidade. Ore por cada um e marque como orado.
+                  </div>
+                  {renderPrayerList()}
+                </div>
+              )}
 
               {/* TAB: ESCALAS & DISPONIBILIDADE */}
               {modalTab === 'escalas' && (
@@ -361,7 +693,7 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
                                 <CheckCircle className="w-4 h-4"/> Confirmado
                               </span>
                             ) : (
-                              <button onClick={() => handleConfirmShift(shift.id)} className="w-full sm:w-auto bg-brand-primary text-white px-6 py-2 rounded-default text-sm font-semibold hover:bg-brand-secondary active:scale-95 outline-none transition-all">
+                              <button onClick={() => handleConfirmShift(shift.id)} className="w-full sm:w-auto bg-brand-primary text-white px-6 py-2 rounded-default text-sm font-semibold hover:bg-brand-secondary active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 transition-all">
                                 Confirmar
                               </button>
                             )}
@@ -377,7 +709,7 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
                         <h4 className="text-sm font-bold text-text-primary flex items-center gap-2"><Clock className="w-4 h-4 text-brand-primary"/> Disponibilidade Semanal</h4>
                         <p className="text-xs text-text-muted mt-1">Informe em quais dias e períodos pode servir.</p>
                       </div>
-                      <button onClick={() => showNotification('Disponibilidade salva com sucesso!')} className="text-sm bg-surface-card border border-white/10 text-white px-5 py-2 rounded-md hover:bg-brand-primary hover:border-brand-primary flex items-center gap-2 outline-none font-bold transition-colors w-full sm:w-auto justify-center"><Save className="w-4 h-4"/> Salvar</button>
+                      <button onClick={() => showNotification('Disponibilidade salva com sucesso!')} className="text-sm bg-surface-card border border-white/10 text-white px-5 py-2 rounded-md hover:bg-brand-primary hover:border-brand-primary flex items-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 font-bold transition-colors w-full sm:w-auto justify-center"><Save className="w-4 h-4"/> Salvar</button>
                     </div>
                     <div className="overflow-x-auto border border-white/10 rounded-md">
                       <table className="w-full text-sm text-left border-collapse bg-surface-dark">
@@ -402,7 +734,7 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
                                         const current = availability[dia] || { M: false, T: false, N: false };
                                         setAvailability({ ...availability, [dia]: { ...current, [periodo]: !isChecked } });
                                       }}
-                                      className={`w-6 h-6 rounded border flex items-center justify-center mx-auto transition-all outline-none ${isChecked ? 'bg-brand-primary border-brand-primary text-white shadow-[0_0_8px_rgba(0,184,169,0.5)]' : 'bg-surface-card border-white/20 text-transparent hover:border-brand-primary/50'}`}
+                                      className={`w-6 h-6 rounded border flex items-center justify-center mx-auto transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${isChecked ? 'bg-brand-primary border-brand-primary text-white shadow-[0_0_8px_rgba(0,184,169,0.5)]' : 'bg-surface-card border-white/20 text-transparent hover:border-brand-primary/50'}`}
                                     ><CheckCircle className="w-4 h-4"/></button>
                                   </td>
                                 );
@@ -448,8 +780,18 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
                           <span className="text-xs font-bold bg-brand-primary/20 text-brand-primary px-2 py-1 rounded-md">Concluído</span>
                         ) : (
                           <button
-                            onClick={() => { setTrainingProgress(100); setUser(prev => ({ ...prev, points: prev.points + 150 })); showNotification('Treinamento Concluído! Você ganhou +150 Zion Points! 🎯'); }}
-                            className="text-xs font-bold bg-brand-primary text-white hover:bg-brand-secondary transition-colors px-4 py-1.5 rounded-md outline-none flex items-center gap-1"
+                            onClick={async () => {
+                              try {
+                                const res = await apiFetch('/api/training/complete', { method: 'POST', body: { moduleId: 'TECNICA_OPERACIONAL' } });
+                                const data = await res.json().catch(() => ({}));
+                                if (res.ok) {
+                                  setTrainingProgress(100);
+                                  setUser(prev => ({ ...prev, points: data.points ?? prev.points }));
+                                  showNotification(data.awarded ? `Treinamento Concluído! Você ganhou +${data.awarded} Zion Points! 🎯` : 'Treinamento concluído!');
+                                } else showNotification(data.error || 'Falha ao concluir treinamento.');
+                              } catch { showNotification('Falha de rede ao concluir treinamento.'); }
+                            }}
+                            className="text-xs font-bold bg-brand-primary text-white hover:bg-brand-secondary transition-colors px-4 py-1.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 flex items-center gap-1"
                           >
                             Concluir <Gift className="w-3 h-3"/>
                           </button>
@@ -471,37 +813,119 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
               )}
 
               {/* TAB: EQUIPE */}
-              {modalTab === 'equipe' && (
-                <div className="animate-in fade-in">
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                    <div className="bg-surface-dark border border-white/5 p-3 rounded-md flex items-center gap-3 hover:border-white/10 transition-colors">
-                      <div className="w-10 h-10 rounded-full bg-brand-primary/20 text-brand-primary flex items-center justify-center font-bold text-sm shrink-0">L</div>
-                      <div>
-                        <div className="font-bold text-text-primary text-sm">Líder da Área</div>
-                        <div className="text-[10px] text-brand-primary font-bold mt-0.5 uppercase">Líder de Área</div>
-                      </div>
-                    </div>
-                    {myAreas.filter(p => p.areaId === selectedAreaId && p.status === 'APROVADO').map(p => (
-                      <div key={p.id} className="bg-surface-dark border border-white/5 p-3 rounded-md flex items-center gap-3 hover:border-white/10 transition-colors">
-                        <div className="w-10 h-10 rounded-full bg-white/10 text-white flex items-center justify-center font-bold text-sm shrink-0">{user?.name?.charAt(0) || '?'}</div>
-                        <div>
-                          <div className="font-bold text-text-primary text-sm">{user?.name}</div>
-                          <div className="text-[10px] text-text-muted mt-0.5">{p.role}</div>
+              {modalTab === 'equipe' && (() => {
+                const team = (areaApproved[selectedAreaId] || []).filter(m => m.id !== activeAreaDetails.leaderId);
+                return (
+                  <div className="animate-in fade-in">
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                      {/* Líder real da área */}
+                      <div className="bg-surface-dark border border-brand-primary/20 p-3 rounded-md flex items-center gap-3">
+                        <Avatar name={activeAreaDetails.leader?.name} src={activeAreaDetails.leader?.profileImage} size={40} />
+                        <div className="min-w-0">
+                          <div className="font-bold text-text-primary text-sm truncate">{activeAreaDetails.leader?.name || 'Líder'}</div>
+                          <div className="text-[10px] text-brand-primary font-bold mt-0.5 uppercase">Líder da Área</div>
                         </div>
                       </div>
-                    ))}
+                      {/* Voluntários aprovados */}
+                      {team.map(m => (
+                        <div key={m.id} className="bg-surface-dark border border-white/5 p-3 rounded-md flex items-center gap-3 hover:border-white/10 transition-colors">
+                          <Avatar name={m.name} src={m.profileImage} size={40} />
+                          <div className="min-w-0">
+                            <div className="font-bold text-text-primary text-sm truncate">{m.name}</div>
+                            <div className="text-[10px] text-text-muted mt-0.5">{m.role || 'Voluntário'}</div>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    {team.length === 0 && (
+                      <p className="text-center text-text-muted text-sm py-6">Ainda não há outros voluntários aprovados nesta área.</p>
+                    )}
                   </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* TAB: MURAL */}
-              {modalTab === 'mural' && (
-                <div className="text-center text-text-muted py-10 bg-surface-dark rounded-default border border-dashed border-white/10 animate-in fade-in">
-                  <MessageSquare className="w-10 h-10 mx-auto mb-3 opacity-20"/>
-                  <p className="text-sm font-medium">Mural da área em breve.</p>
-                  <p className="text-xs mt-1 opacity-60">Usará a mesma lógica do Mural de Links.</p>
-                </div>
-              )}
+              {modalTab === 'mural' && (() => {
+                const isLeader = activeAreaDetails.leaderId === user?.id || user?.role === 'ADMIN';
+                const pinned = muralMsgs.filter(m => m.isPinned);
+                const normal = muralMsgs.filter(m => !m.isPinned);
+                const catInfo = (c) => AREA_MURAL_CATS.find(x => x.id === c) || AREA_MURAL_CATS[3];
+                const MsgCard = (m) => {
+                  const ci = catInfo(m.category);
+                  const canManage = isLeader || m.authorId === user?.id;
+                  return (
+                    <div key={m.id} className={`bg-surface-dark border rounded-default p-4 ${m.isPinned ? 'border-amber-500/30' : 'border-white/5'}`}>
+                      <div className="flex justify-between items-start gap-2 mb-1">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <Avatar name={m.author?.name} src={m.author?.profileImage} size={24} />
+                          <span className="font-bold text-text-primary text-sm truncate">{m.author?.name || 'Membro'}</span>
+                          <span className={`text-[9px] font-bold uppercase tracking-wider px-1.5 py-0.5 rounded-sm ${ci.bg} ${ci.color}`}>{ci.label}</span>
+                          {m.isPinned && <Pin className="w-3.5 h-3.5 text-amber-400" />}
+                        </div>
+                        <div className="flex items-center gap-1 shrink-0">
+                          {isLeader && <button onClick={() => handleMuralPin(m.id)} title={m.isPinned ? 'Desafixar' : 'Fixar'} className="p-1 rounded text-text-muted hover:text-amber-400 hover:bg-white/5 transition-colors"><Pin className="w-4 h-4" /></button>}
+                          {canManage && <button onClick={() => handleMuralDelete(m.id)} title="Excluir" className="p-1 rounded text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors"><Trash2 className="w-4 h-4" /></button>}
+                        </div>
+                      </div>
+                      <p className="text-sm text-text-secondary leading-relaxed whitespace-pre-wrap">{m.content}</p>
+                      {renderMuralPoll(m)}
+                      {renderMuralReactions(m)}
+                      <div className="text-[10px] text-text-muted mt-2">{new Date(m.createdAt).toLocaleString('pt-BR')}</div>
+                    </div>
+                  );
+                };
+                return (
+                  <div className="space-y-5 animate-in fade-in">
+                    {/* Compositor */}
+                    <form onSubmit={handlePostMural} className="bg-surface-dark border border-white/10 rounded-default p-4">
+                      <textarea value={muralContent} onChange={e => setMuralContent(e.target.value)} rows="2" placeholder={muralPoll ? 'Qual é a pergunta da enquete?' : 'Compartilhe um aviso, escala ou recado com a equipe...'} className="w-full bg-surface-card border border-white/5 rounded-md px-3 py-2 text-sm text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 focus:border-brand-primary resize-none" required />
+                      {muralPoll && (
+                        <div className="mt-3 space-y-2">
+                          {muralOptions.map((opt, i) => (
+                            <div key={i} className="flex items-center gap-2">
+                              <input type="text" value={opt} onChange={e => setMuralOptions(prev => prev.map((o, idx) => idx === i ? e.target.value : o))} placeholder={`Opção ${i + 1}`} maxLength={80} className="flex-1 bg-surface-card border border-white/5 rounded-md px-3 py-2 text-sm text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60" />
+                              {muralOptions.length > 2 && <button type="button" onClick={() => setMuralOptions(prev => prev.filter((_, idx) => idx !== i))} aria-label="Remover" className="p-2 rounded text-text-muted hover:text-red-400"><X className="w-4 h-4" /></button>}
+                            </div>
+                          ))}
+                          {muralOptions.length < 6 && <button type="button" onClick={() => setMuralOptions(prev => [...prev, ''])} className="flex items-center gap-1.5 text-xs font-semibold text-brand-primary hover:text-brand-secondary"><Plus className="w-3.5 h-3.5" /> Adicionar opção</button>}
+                        </div>
+                      )}
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mt-3 gap-3">
+                        <div className="flex flex-wrap gap-2">
+                          {AREA_MURAL_CATS.map(c => (
+                            <button key={c.id} type="button" onClick={() => setMuralCat(c.id)} className={`px-3 py-1.5 rounded-full text-[10px] font-semibold transition-all ${muralCat === c.id ? `${c.bg} ${c.border} ${c.color} border ring-1 ring-current` : 'bg-surface-card border border-white/5 text-text-muted hover:text-white'}`}>{c.label}</button>
+                          ))}
+                          <button type="button" onClick={() => setMuralPoll(v => !v)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-full text-[10px] font-semibold transition-all ${muralPoll ? 'bg-brand-primary/20 border-brand-primary/40 text-brand-primary border ring-1 ring-current' : 'bg-surface-card border border-white/5 text-text-muted hover:text-white'}`}><BarChart3 className="w-3.5 h-3.5" /> Enquete</button>
+                        </div>
+                        <button type="submit" disabled={!muralContent.trim() || muralPosting} className="flex items-center gap-2 bg-brand-primary text-white px-5 py-2 rounded-default text-sm font-bold hover:bg-brand-secondary transition-all disabled:opacity-50 w-full sm:w-auto justify-center">
+                          {muralPosting ? <Loader2 className="w-4 h-4 animate-spin" /> : <><Send className="w-4 h-4" /> Publicar</>}
+                        </button>
+                      </div>
+                    </form>
+
+                    {/* Lista */}
+                    {muralLoading ? (
+                      <div className="flex justify-center py-6"><Loader2 className="w-6 h-6 animate-spin text-brand-primary" /></div>
+                    ) : muralMsgs.length === 0 ? (
+                      <div className="text-center text-text-muted py-10 bg-surface-dark rounded-default border border-dashed border-white/10">
+                        <MessageSquare className="w-10 h-10 mx-auto mb-3 opacity-20" />
+                        <p className="text-sm font-medium">O mural está vazio.</p>
+                        <p className="text-xs mt-1 opacity-60">Seja o primeiro a publicar um aviso para a equipe.</p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {pinned.length > 0 && (
+                          <div className="space-y-3">
+                            <div className="flex items-center gap-2 text-amber-400 text-[10px] font-bold uppercase tracking-wider"><Pin className="w-3.5 h-3.5" /> Fixadas</div>
+                            {pinned.map(MsgCard)}
+                          </div>
+                        )}
+                        {normal.map(MsgCard)}
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
             </div>
           </div>
         </div>
@@ -509,7 +933,7 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
 
       {/* ── MODAL DE CONFIRMAÇÃO DE CANCELAMENTO DE ÁREA (sem window.confirm) */}
       {areaToCancel && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-in fade-in duration-200" onClick={() => setAreaToCancel(null)}>
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-200" onClick={() => setAreaToCancel(null)}>
           <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
             <div className="flex justify-center mb-4 text-amber-400"><div className="bg-amber-500/10 p-3 rounded-full"><AlertTriangle className="w-8 h-8"/></div></div>
             <h3 className="text-xl font-bold text-text-primary text-center mb-2">
@@ -521,8 +945,8 @@ const VoluntariosModule = ({ user, setUser, showNotification }) => {
                 : 'Tem certeza que deseja cancelar sua solicitação de entrada nesta área?'}
             </p>
             <div className="flex gap-3">
-              <button onClick={() => setAreaToCancel(null)} className="flex-1 px-4 py-2.5 rounded-default bg-surface-dark text-text-primary font-semibold hover:bg-white/5 transition-all outline-none">Voltar</button>
-              <button onClick={executeCancelArea} className="flex-1 px-4 py-2.5 rounded-default bg-red-500 hover:bg-red-600 text-white font-semibold transition-all outline-none">Confirmar</button>
+              <button onClick={() => setAreaToCancel(null)} className="flex-1 px-4 py-2.5 rounded-default bg-surface-dark text-text-primary font-semibold hover:bg-white/5 transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Voltar</button>
+              <button onClick={executeCancelArea} className="flex-1 px-4 py-2.5 rounded-default bg-red-500 hover:bg-red-600 text-white font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Confirmar</button>
             </div>
           </div>
         </div>

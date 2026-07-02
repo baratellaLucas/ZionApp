@@ -1,0 +1,41 @@
+# ── Arquivos do assistente / editores ──────────────────────────────
+.claude/
+.vscode/
+.idea/
+*.code-workspace
+
+# ── Dependências (em qualquer subpasta: raiz, backend, frontend) ─────
+node_modules/
+
+# ── Build / artefatos de compilação ─────────────────────────────────
+dist/
+build/
+*.tsbuildinfo
+frontend/dist/
+backend/dist/
+
+# ── Banco de dados local de desenvolvimento (SQLite) ────────────────
+*.db
+*.db-journal
+*.sqlite
+backend/prisma/dev.db
+
+# ── Variáveis de ambiente (não versionar segredos/URLs locais) ──────
+.env
+.env.*
+!.env.example
+
+# ── Logs ────────────────────────────────────────────────────────────
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+pnpm-debug.log*
+
+# ── Temporários do Office e do sistema operacional ──────────────────
+~$*
+~WRL*.tmp
+*.tmp
+.DS_Store
+Thumbs.db
+desktop.ini
