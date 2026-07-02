@@ -71,7 +71,13 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   const loadBugs = async () => {
     try { const res = await apiFetch('/api/bug-reports'); if (res.ok) setBugReports(await res.json()); } catch { /* offline */ }
   };
-  useEffect(() => { if (activeTab === 'bugs') loadBugs(); }, [activeTab]);
+  // Recarrega ao abrir a aba e faz polling leve enquanto ela estiver ativa (novos reportes aparecem sozinhos)
+  useEffect(() => {
+    if (activeTab !== 'bugs') return;
+    loadBugs();
+    const t = setInterval(loadBugs, 10000);
+    return () => clearInterval(t);
+  }, [activeTab]);
 
   const toggleBugStatus = async (id) => {
     try {
@@ -1006,7 +1012,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
 
       {qrEvent && (
         <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/70" onClick={() => setQrEvent(null)}>
-          <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full text-center" onClick={e => e.stopPropagation()}>
+          <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full max-h-[90vh] overflow-y-auto text-center" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-4">
               <h3 className="text-lg font-bold text-text-primary flex items-center gap-2"><QrCode className="w-5 h-5 text-brand-primary"/> Check-in</h3>
               <button onClick={() => setQrEvent(null)} aria-label="Fechar" className="text-text-muted hover:text-white outline-none"><X className="w-5 h-5"/></button>

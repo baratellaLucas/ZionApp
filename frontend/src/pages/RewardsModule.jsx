@@ -156,7 +156,7 @@ const RewardsModule = ({ user, setUser, showNotification }) => {
       {/* Modal do voucher gerado */}
       {voucher && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-200" onClick={() => setVoucher(null)}>
-          <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in zoom-in-95 duration-200 text-center" onClick={e => e.stopPropagation()}>
+          <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200 text-center" onClick={e => e.stopPropagation()}>
             <button onClick={() => setVoucher(null)} className="absolute top-4 right-4 text-text-muted hover:text-white"><X className="w-5 h-5" /></button>
             <div className="flex justify-center mb-4 text-emerald-400"><div className="bg-emerald-500/10 p-3 rounded-full"><Ticket className="w-8 h-8" /></div></div>
             <h3 className="text-lg font-bold text-text-primary mb-1">Voucher gerado!</h3>
@@ -175,7 +175,7 @@ const RewardsModule = ({ user, setUser, showNotification }) => {
       {/* Modal: QR de um voucher da lista */}
       {qrVoucher && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/70 animate-in fade-in duration-200" onClick={() => setQrVoucher(null)}>
-          <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in zoom-in-95 duration-200 text-center relative" onClick={e => e.stopPropagation()}>
+          <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200 text-center relative" onClick={e => e.stopPropagation()}>
             <button onClick={() => setQrVoucher(null)} aria-label="Fechar" className="absolute top-4 right-4 text-text-muted hover:text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-5 h-5" /></button>
             <div className="flex justify-center mb-3 text-brand-primary"><div className="bg-brand-primary/10 p-3 rounded-full"><QrCode className="w-7 h-7" /></div></div>
             <h3 className="text-lg font-bold text-text-primary mb-1">{qrVoucher.productName}</h3>

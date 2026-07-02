@@ -511,7 +511,8 @@ export default function App() {
       {/* Pop-up de boas-vindas (primeiro acesso) */}
       {showWelcome && (
         <div className="fixed inset-0 z-[130] flex items-center justify-center p-4 bg-black/70" onClick={handleCloseWelcome}>
-          <div className="bg-surface-card border border-white/10 rounded-2xl shadow-2xl max-w-md w-full overflow-hidden" onClick={e => e.stopPropagation()}>
+          <div className="relative bg-surface-card border border-white/10 rounded-2xl shadow-2xl max-w-md w-full max-h-[90vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
+            <button onClick={handleCloseWelcome} aria-label="Fechar" className="absolute top-3 right-3 z-10 text-white/80 hover:text-white bg-black/20 rounded-full p-1 outline-none focus-visible:ring-2 focus-visible:ring-white/60"><X className="w-5 h-5"/></button>
             <div className="bg-gradient-to-br from-brand-secondary to-brand-primary p-6 text-center">
               <div className="mx-auto w-16 h-16 rounded-full bg-black/20 flex items-center justify-center mb-3"><Award className="w-9 h-9 text-yellow-300" /></div>
               <h3 className="text-2xl font-display font-bold text-white">Bem-vindo(a), {user.name?.split(' ')[0]}! 🎉</h3>

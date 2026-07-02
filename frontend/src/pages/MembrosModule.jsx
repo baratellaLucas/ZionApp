@@ -440,7 +440,7 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
       {/* Modal: comprovar leitura do dia */}
       {showReadingModal && (
         <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-200" onClick={() => !checking && setShowReadingModal(false)}>
-          <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+          <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full max-h-[90vh] overflow-y-auto animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
             <div className="flex justify-between items-center mb-3">
               <h3 className="text-lg font-bold text-text-primary flex items-center gap-2"><BookOpen className="w-5 h-5 text-orange-400"/> Leitura de hoje</h3>
               <button onClick={() => setShowReadingModal(false)} className="text-text-muted hover:text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-5 h-5"/></button>
