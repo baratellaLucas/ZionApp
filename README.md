@@ -55,6 +55,23 @@ Este é um projeto de **Atividade de Extensão** do curso de Análise e Desenvol
 
 ---
 
+## 📸 Telas
+
+<div align="center">
+
+<img src="docs/screenshots/inicio.png" width="230" alt="Início — engajamento e plano bíblico" />&nbsp;
+<img src="docs/screenshots/loja.png" width="230" alt="Loja de recompensas" />&nbsp;
+<img src="docs/screenshots/voluntarios.png" width="230" alt="Voluntariado" />
+
+<img src="docs/screenshots/links.png" width="230" alt="Links — pequenos grupos" />&nbsp;
+<img src="docs/screenshots/admin.png" width="230" alt="Painel administrativo" />
+
+<sub>Início · Loja · Voluntários · Links · Admin</sub>
+
+</div>
+
+---
+
 ## 🎮 Como funciona a gamificação
 
 Cada ação vira **Zion Points** (creditados de forma segura, sem duplicação):
