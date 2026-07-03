@@ -552,19 +552,19 @@ app.post('/api/events/:id/checkin', h(async (req, res) => {
 }));
 
 // Confirmar participação (RSVP, sem código) — marca presença no calendário e credita pontos
+// RSVP: só marca presença pretendida no calendário — pontos só são dados no check-in real
 app.post('/api/events/:id/participate', h(async (req, res) => {
   const ev = await prisma.event.findUnique({ where: { id: pid(req) } });
   if (!ev) return res.status(404).json({ error: 'Evento não encontrado.' });
   const refId = String(req.body.refId || ev.id); // evento ou ocorrência dele (anti-farm)
   if (refId !== ev.id && !refId.startsWith(`${ev.id}@`)) return res.status(400).json({ error: 'Referência de evento inválida.' });
+  const existing = await prisma.eventParticipation.findUnique({ where: { userId_refId: { userId: req.user!.id, refId } } });
   await prisma.eventParticipation.upsert({
     where: { userId_refId: { userId: req.user!.id, refId } },
     update: {},
     create: { userId: req.user!.id, eventId: ev.id, refId },
   });
-  const award = await awardPoints(req.user!.id, 'EVENT_PARTICIPATION', refId, 20);
-  const user = await prisma.user.findUnique({ where: { id: req.user!.id }, select: userPublic });
-  res.status(201).json({ awarded: award.awarded, already: award.already, points: user?.points, refId });
+  res.status(201).json({ already: !!existing, refId });
 }));
 
 // Minhas confirmações (RSVP e check-in) — usado para alternar o botão Participar/Check-in

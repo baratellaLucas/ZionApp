@@ -191,8 +191,8 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
     finally { setCheckingIn(false); }
   };
 
-  // Participar (RSVP): confirma presença sem código — marca no calendário e credita pontos.
-  // Depois de confirmado, o botão vira "Check-in" (confirmação real de presença no local).
+  // Participar (RSVP): confirma presença sem código — marca no calendário, sem pontos ainda.
+  // Depois de confirmado, o botão vira "Check-in"; os pontos só são creditados no check-in real.
   const handleParticipate = async (ev) => {
     if (rsvpEvents.includes(ev.occId)) return;
     setRsvpEvents(prev => [...prev, ev.occId]); // otimista
@@ -200,9 +200,8 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
       const res = await apiFetch(`/api/events/${ev.id}/participate`, { method: 'POST', body: { refId: ev.occId } });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setUser(prev => ({ ...prev, points: data.points ?? prev.points }));
         if (data.already) showNotification('Presença já confirmada neste evento.');
-        else showNotification(`Presença confirmada! +${data.awarded} Zion Points! 🎉`);
+        else showNotification('Presença confirmada! Faça o check-in no evento para ganhar seus Zion Points. 🎉');
       } else {
         setRsvpEvents(prev => prev.filter(id => id !== ev.occId)); // desfaz otimista
         showNotification(data.error || 'Não foi possível confirmar presença.');

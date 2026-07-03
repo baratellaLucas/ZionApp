@@ -70,7 +70,11 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   const [areaPositions,    setAreaPositions]    = useState({}); // { areaId: [AreaPosition] }
   const [newPositionName,  setNewPositionName]  = useState({}); // { areaId: string }
   const [events,           setEvents]           = useState([]);
-  const [eventRsvps,       setEventRsvps]       = useState([]); // refIds de eventos VOLUNTARIO com presença confirmada
+  const [eventRsvps,       setEventRsvps]       = useState([]); // refIds de eventos VOLUNTARIO com RSVP feito
+  const [eventCheckins,    setEventCheckins]    = useState([]); // refIds com check-in real (pontos só aqui)
+  const [checkinEvent,     setCheckinEvent]     = useState(null); // ocorrência em check-in
+  const [checkinCode,      setCheckinCode]      = useState('');
+  const [checkingInEvent,  setCheckingInEvent]  = useState(false);
   const [scheduleEventId,  setScheduleEventId]  = useState({}); // { areaId: eventId }
   const [availableForEvent,setAvailableForEvent]= useState({}); // { areaId: [userId] }
   const [isLoading,        setIsLoading]        = useState(true);
@@ -248,7 +252,11 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
         if (resShifts && resShifts.ok) setShifts(await resShifts.json());
         if (resAnn && resAnn.ok) setAnnouncements(await resAnn.json());
         if (resEvents && resEvents.ok) setEvents(await resEvents.json());
-        if (resEventParts && resEventParts.ok) setEventRsvps((await resEventParts.json()).map(p => p.refId));
+        if (resEventParts && resEventParts.ok) {
+          const parts = await resEventParts.json();
+          setEventRsvps(parts.map(p => p.refId));
+          setEventCheckins(parts.filter(p => p.checkedInAt).map(p => p.refId));
+        }
         if (resPoints && resPoints.ok) {
           const awards = await resPoints.json();
           if (awards.some(a => a.ruleKey === 'TRAINING_COMPLETION')) setTrainingProgress(100);
@@ -405,7 +413,8 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     } catch { showNotification('Falha de rede.'); }
   };
 
-  // RSVP em evento de Voluntário (ex.: Escola ZAO) — mesmo endpoint usado no Início
+  // RSVP em evento de Voluntário (ex.: Escola ZAO) — mesmo endpoint usado no Início.
+  // Sem pontos ainda: depois de confirmado, o botão vira "Check-in" (pontos só no check-in real).
   const handleParticipateEvent = async (occ) => {
     if (eventRsvps.includes(occ.occId)) return;
     setEventRsvps(prev => [...prev, occ.occId]); // otimista
@@ -413,8 +422,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
       const res = await apiFetch(`/api/events/${occ.id}/participate`, { method: 'POST', body: { refId: occ.occId } });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setUser(prev => ({ ...prev, points: data.points ?? prev.points }));
-        showNotification(data.already ? 'Presença já confirmada neste evento.' : `Presença confirmada! +${data.awarded} Zion Points! 🎉`);
+        showNotification(data.already ? 'Presença já confirmada neste evento.' : 'Presença confirmada! Faça o check-in no evento para ganhar seus Zion Points. 🎉');
       } else {
         setEventRsvps(prev => prev.filter(id => id !== occ.occId));
         showNotification(data.error || 'Não foi possível confirmar presença.');
@@ -423,6 +431,25 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
       setEventRsvps(prev => prev.filter(id => id !== occ.occId));
       showNotification('Falha de rede ao confirmar presença.');
     }
+  };
+
+  // Check-in real no evento de Voluntário (via código exibido no local) — credita os pontos
+  const handleEventCheckin = async () => {
+    if (!checkinCode.trim() || !checkinEvent) return;
+    setCheckingInEvent(true);
+    try {
+      const res = await apiFetch(`/api/events/${checkinEvent.id}/checkin`, { method: 'POST', body: { code: checkinCode.trim(), refId: checkinEvent.occId } });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setEventRsvps(prev => prev.includes(checkinEvent.occId) ? prev : [...prev, checkinEvent.occId]);
+        setEventCheckins(prev => prev.includes(checkinEvent.occId) ? prev : [...prev, checkinEvent.occId]);
+        setUser(prev => ({ ...prev, points: data.points ?? prev.points }));
+        setCheckinEvent(null); setCheckinCode('');
+        if (data.already) showNotification('Você já fez check-in neste evento.');
+        else showNotification(`Check-in confirmado! +${data.awarded} Zion Points! 🎉`);
+      } else showNotification(data.error || 'Código de check-in inválido.');
+    } catch { showNotification('Falha de rede no check-in.'); }
+    finally { setCheckingInEvent(false); }
   };
 
   // Solicitar entrada (PENDENTE) — persiste via POST /api/areas/:id/request
@@ -633,15 +660,18 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
           <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2 uppercase tracking-wide"><CalendarDays className="w-4 h-4"/> Eventos de Voluntariado</h3>
           <div className="space-y-2">
             {volunteerEventOccurrences.map(occ => {
-              const confirmed = eventRsvps.includes(occ.occId);
+              const hasRsvp = eventRsvps.includes(occ.occId);
+              const hasCheckedIn = eventCheckins.includes(occ.occId);
               return (
                 <div key={occ.occId} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-surface-card border border-white/10 rounded-md p-3">
                   <div>
                     <div className="font-bold text-text-primary">{occ.title}</div>
                     <div className="text-xs text-text-muted flex items-center gap-1 mt-0.5 capitalize"><Clock className="w-3 h-3 text-brand-primary"/> {formatData(occ.occIso)}{occ.location ? ` • ${occ.location}` : ''}</div>
                   </div>
-                  {confirmed ? (
+                  {hasCheckedIn ? (
                     <span className="flex items-center justify-center gap-1.5 text-brand-primary text-sm font-bold bg-brand-primary/10 border border-brand-primary/20 px-4 py-2 rounded-default shrink-0"><CheckCircle className="w-4 h-4"/> Confirmado</span>
+                  ) : hasRsvp ? (
+                    <button onClick={() => { setCheckinCode(''); setCheckinEvent(occ); }} className="flex items-center justify-center gap-1.5 bg-brand-primary text-white px-4 py-2 rounded-default text-sm font-semibold hover:bg-brand-secondary transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 shrink-0"><Clock className="w-4 h-4"/> Check-in</button>
                   ) : (
                     <button onClick={() => handleParticipateEvent(occ)} className="flex items-center justify-center gap-1.5 bg-brand-primary text-white px-4 py-2 rounded-default text-sm font-semibold hover:bg-brand-secondary transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 shrink-0"><CheckCircle className="w-4 h-4"/> Participar</button>
                   )}
@@ -1265,6 +1295,23 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                 );
               })()}
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── MODAL DE CHECK-IN DE EVENTO DE VOLUNTÁRIO (código exibido no local) */}
+      {checkinEvent && (
+        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-200" onClick={() => !checkingInEvent && setCheckinEvent(null)}>
+          <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-3">
+              <h3 className="text-lg font-bold text-text-primary flex items-center gap-2"><CheckCircle className="w-5 h-5 text-brand-primary"/> Check-in</h3>
+              <button onClick={() => setCheckinEvent(null)} aria-label="Fechar" className="text-text-muted hover:text-white outline-none"><X className="w-5 h-5"/></button>
+            </div>
+            <p className="text-sm text-text-muted mb-4"><span className="text-white font-semibold">{checkinEvent.title}</span> — digite o código exibido no local para confirmar sua presença e ganhar seus pontos.</p>
+            <input value={checkinCode} onChange={e => setCheckinCode(e.target.value.toUpperCase())} placeholder="Código (ex: ZION01)" className="w-full bg-surface-dark border border-white/10 rounded-md px-4 py-2.5 text-white font-mono text-center tracking-widest outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 focus:border-brand-primary mb-4" />
+            <button onClick={handleEventCheckin} disabled={!checkinCode.trim() || checkingInEvent} className="w-full bg-brand-primary hover:bg-brand-secondary text-white py-2.5 rounded-default font-bold flex items-center justify-center gap-2 disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 transition-colors">
+              {checkingInEvent ? <Loader2 className="w-4 h-4 animate-spin"/> : <CheckCircle className="w-4 h-4"/>} Confirmar presença
+            </button>
           </div>
         </div>
       )}
