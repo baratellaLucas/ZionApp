@@ -216,6 +216,27 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
     finally { setCheckingIn(false); }
   };
 
+  // Participar (RSVP): confirma presença sem código — marca no calendário e credita pontos
+  const handleParticipate = async (ev) => {
+    if (participatingEvents.includes(ev.occId)) return;
+    setParticipatingEvents(prev => [...prev, ev.occId]); // otimista
+    try {
+      const res = await apiFetch(`/api/events/${ev.id}/participate`, { method: 'POST', body: { refId: ev.occId } });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setUser(prev => ({ ...prev, points: data.points ?? prev.points }));
+        if (data.already) showNotification('Presença já confirmada neste evento.');
+        else showNotification(`Presença confirmada! +${data.awarded} Zion Points! 🎉`);
+      } else {
+        setParticipatingEvents(prev => prev.filter(id => id !== ev.occId)); // desfaz otimista
+        showNotification(data.error || 'Não foi possível confirmar presença.');
+      }
+    } catch {
+      setParticipatingEvents(prev => prev.filter(id => id !== ev.occId));
+      showNotification('Falha de rede ao confirmar presença.');
+    }
+  };
+
   const openReadingText = async () => {
     setShowTextModal(true);
     if (bibleText) return; // já carregado nesta sessão
@@ -377,9 +398,12 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
                     <div className="text-sm text-text-muted flex items-center gap-1 mt-1 capitalize"><Clock className="w-3 h-3 text-brand-primary"/> {formatData(ev.occIso)}</div>
                   </div>
                   {isParticipating ? (
-                    <span className="flex items-center justify-center gap-1 text-brand-primary text-sm font-bold bg-brand-primary/10 border border-brand-primary/20 px-4 py-2 rounded-default"><CheckCircle className="w-4 h-4"/> Confirmado</span>
+                    <span className="flex items-center justify-center gap-1 text-brand-primary text-sm font-bold bg-brand-primary/10 border border-brand-primary/20 px-4 py-2 rounded-default shrink-0"><CheckCircle className="w-4 h-4"/> Confirmado</span>
                   ) : (
-                    <button onClick={() => { setCheckinCode(''); setCheckinEvent(ev); }} className="flex items-center gap-1.5 bg-transparent text-brand-primary border border-brand-primary/30 px-5 py-2 rounded-default text-sm font-semibold hover:bg-brand-primary hover:text-white transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><CheckCircle className="w-4 h-4"/> Check-in</button>
+                    <div className="flex gap-2 shrink-0">
+                      <button onClick={() => handleParticipate(ev)} className="flex items-center justify-center gap-1.5 bg-brand-primary text-white px-4 py-2 rounded-default text-sm font-semibold hover:bg-brand-secondary transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><CheckCircle className="w-4 h-4"/> Participar</button>
+                      <button onClick={() => { setCheckinCode(''); setCheckinEvent(ev); }} className="flex items-center justify-center gap-1.5 bg-transparent text-brand-primary border border-brand-primary/30 px-4 py-2 rounded-default text-sm font-semibold hover:bg-brand-primary hover:text-white transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Clock className="w-4 h-4"/> Check-in</button>
+                    </div>
                   )}
                 </div>
               );

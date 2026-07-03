@@ -1,3 +1,4 @@
+import 'dotenv/config'; // carrega backend/.env (local); em produção as vars vêm do host
 import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import { PrismaClient } from '@prisma/client';
@@ -513,6 +514,17 @@ app.post('/api/events/:id/checkin', h(async (req, res) => {
   if (!ev.checkinCode || code !== ev.checkinCode) return res.status(400).json({ error: 'Código de check-in inválido.' });
   // refId deve ser o evento ou uma ocorrência dele (anti-farm)
   const refId = String(req.body.refId || ev.id);
+  if (refId !== ev.id && !refId.startsWith(`${ev.id}@`)) return res.status(400).json({ error: 'Referência de evento inválida.' });
+  const award = await awardPoints(req.user!.id, 'EVENT_PARTICIPATION', refId, 20);
+  const user = await prisma.user.findUnique({ where: { id: req.user!.id }, select: userPublic });
+  res.status(201).json({ awarded: award.awarded, already: award.already, points: user?.points, refId });
+}));
+
+// Confirmar participação (RSVP, sem código) — marca presença no calendário e credita pontos
+app.post('/api/events/:id/participate', h(async (req, res) => {
+  const ev = await prisma.event.findUnique({ where: { id: pid(req) } });
+  if (!ev) return res.status(404).json({ error: 'Evento não encontrado.' });
+  const refId = String(req.body.refId || ev.id); // evento ou ocorrência dele (anti-farm)
   if (refId !== ev.id && !refId.startsWith(`${ev.id}@`)) return res.status(400).json({ error: 'Referência de evento inválida.' });
   const award = await awardPoints(req.user!.id, 'EVENT_PARTICIPATION', refId, 20);
   const user = await prisma.user.findUnique({ where: { id: req.user!.id }, select: userPublic });
