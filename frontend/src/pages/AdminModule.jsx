@@ -14,6 +14,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   const [leaders, setLeaders] = useState([]);
   const [links, setLinks] = useState([]);
   const [events, setEvents] = useState([]);
+  const [eventStats, setEventStats] = useState({}); // { eventId: { rsvpCount, checkinCount } }
   const [announcements, setAnnouncements] = useState([]);
   const [publications, setPublications] = useState([]);
   const [areas, setAreas] = useState([]);
@@ -116,7 +117,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   const fetchAdminData = async () => {
     try {
       setIsLoading(true);
-      const [resUsers, resLinks, resEvents, resAnn, resPubs, resAreas, resProducts, resRules, resStats] = await Promise.all([
+      const [resUsers, resLinks, resEvents, resAnn, resPubs, resAreas, resProducts, resRules, resStats, resEventStats] = await Promise.all([
         apiFetch('/api/users').catch(() => null),
         apiFetch('/api/links').catch(() => null),
         apiFetch('/api/events').catch(() => null),
@@ -125,7 +126,8 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
         apiFetch('/api/areas').catch(() => null),
         apiFetch('/api/products').catch(() => null),
         apiFetch('/api/point-rules').catch(() => null),
-        apiFetch('/api/admin/stats').catch(() => null)
+        apiFetch('/api/admin/stats').catch(() => null),
+        apiFetch('/api/events/stats').catch(() => null)
       ]);
 
       if (resUsers?.ok) {
@@ -143,6 +145,10 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
       if (resProducts?.ok) setProducts(await resProducts.json());
       if (resRules?.ok) setPointRules(await resRules.json());
       if (resStats?.ok) setStats(await resStats.json());
+      if (resEventStats?.ok) {
+        const rows = await resEventStats.json();
+        setEventStats(Object.fromEntries(rows.map(r => [r.eventId, r])));
+      }
 
     } catch (e) {} finally { setIsLoading(false); }
   };
@@ -769,6 +775,10 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                         )}
                       </div>
                       <div className="text-sm text-text-muted flex items-center gap-2 mt-1">{formatDatePT(e.date)} • {e.location}</div>
+                      <div className="flex items-center gap-3 mt-1.5 text-xs">
+                        <span className="flex items-center gap-1 text-brand-primary font-semibold"><CheckCircle className="w-3.5 h-3.5"/> {eventStats[e.id]?.rsvpCount || 0} confirmaram presença</span>
+                        <span className="flex items-center gap-1 text-emerald-400 font-semibold"><QrCode className="w-3.5 h-3.5"/> {eventStats[e.id]?.checkinCount || 0} fizeram check-in</span>
+                      </div>
                     </div>
                     <div className="flex gap-2">
                       <button onClick={() => openQr(e)} className="p-2 hover:bg-white/10 rounded-md text-brand-primary" title="QR / Check-in"><QrCode className="w-5 h-5"/></button>

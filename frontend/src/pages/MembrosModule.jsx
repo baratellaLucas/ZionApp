@@ -3,6 +3,7 @@ import { apiFetch } from '../api';
 import { Award, BookOpen, Calendar, Clock, CheckCircle, ChevronLeft, ChevronRight, CalendarDays, Megaphone, Heart, MessageSquare, Flame, Camera, X, Loader2, Trophy } from 'lucide-react';
 import GroupsPanel from './GroupsPanel';
 import { compressImage, fileToDataUrl } from '../utils/image';
+import { getEventOccurrences } from '../utils/eventOccurrences';
 
 const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandled }) => {
   const [events, setEvents] = useState([]);
@@ -25,7 +26,8 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
   const [textError, setTextError] = useState('');
   const [isLoading, setIsLoading] = useState(true);
   const [calendarDate, setCalendarDate] = useState(new Date());
-  const [participatingEvents, setParticipatingEvents] = useState([]);
+  const [rsvpEvents, setRsvpEvents] = useState([]); // refIds com presença confirmada (RSVP)
+  const [checkedInEvents, setCheckedInEvents] = useState([]); // refIds com check-in real feito
   // Pedido de oração
   const [prayerOpen, setPrayerOpen] = useState(false);
   const [prayerText, setPrayerText] = useState('');
@@ -34,22 +36,23 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        const [resEvents, resShifts, resAnn, resPubs, resReading, resPoints] = await Promise.all([
+        const [resEvents, resShifts, resAnn, resPubs, resReading, resParts] = await Promise.all([
           apiFetch('/api/events?type=GERAL').catch(() => null),
           apiFetch(`/api/shifts?userId=${user?.id}`).catch(() => null),
           apiFetch('/api/announcements?type=GERAL').catch(() => null),
           apiFetch('/api/publications').catch(() => null),
           apiFetch('/api/reading/me').catch(() => null),
-          apiFetch('/api/points/mine').catch(() => null)
+          apiFetch('/api/events/my-participations').catch(() => null)
         ]);
         if (resEvents && resEvents.ok) setEvents(await resEvents.json());
         if (resShifts && resShifts.ok) setShifts(await resShifts.json());
         if (resAnn && resAnn.ok) setAnnouncements(await resAnn.json());
         if (resPubs && resPubs.ok) setPublications(await resPubs.json());
         if (resReading && resReading.ok) setReading(await resReading.json());
-        if (resPoints && resPoints.ok) {
-          const awards = await resPoints.json();
-          setParticipatingEvents(awards.filter(a => a.ruleKey === 'EVENT_PARTICIPATION').map(a => a.refId));
+        if (resParts && resParts.ok) {
+          const parts = await resParts.json();
+          setRsvpEvents(parts.map(p => p.refId));
+          setCheckedInEvents(parts.filter(p => p.checkedInAt).map(p => p.refId));
         }
       } catch (error) {} finally { setIsLoading(false); }
     };
@@ -67,45 +70,13 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
 
   // ── Recorrência: mostra só a PRÓXIMA ocorrência (a atual some quando termina) ──
   const RECURRENCE_LABEL = { WEEKLY: 'Semanal', MONTHLY: 'Mensal' };
-  const EVENT_DURATION_MS = 2 * 60 * 60 * 1000; // duração padrão de um evento (2h)
-  const advanceDate = (date, rec) => {
-    const n = new Date(date);
-    if (rec === 'WEEKLY') n.setDate(n.getDate() + 7);
-    else if (rec === 'MONTHLY') n.setMonth(n.getMonth() + 1);
-    return n;
-  };
-  // Próxima ocorrência ainda não encerrada (em andamento ou futura); null se já passou e não repete
-  const nextRelevantOccurrence = (ev) => {
-    const rec = ev.recurrence || 'NONE';
-    const agora = Date.now();
-    let d = new Date(ev.date);
-    if (rec === 'NONE') return (d.getTime() + EVENT_DURATION_MS >= agora) ? d : null;
-    let guard = 0;
-    while (d.getTime() + EVENT_DURATION_MS < agora && guard < 5000) { d = advanceDate(d, rec); guard++; }
-    return d;
-  };
-  const nowMs = Date.now();
-  const eventOccurrences = events
-    .map(ev => {
-      const occ = nextRelevantOccurrence(ev);
-      if (!occ) return null;
-      const start = occ.getTime();
-      const recurring = ev.recurrence && ev.recurrence !== 'NONE';
-      return {
-        ...ev,
-        occId: recurring ? `${ev.id}@${occ.toISOString()}` : ev.id,
-        occIso: occ.toISOString(),
-        isNow: nowMs >= start && nowMs <= start + EVENT_DURATION_MS,
-      };
-    })
-    .filter(Boolean)
-    .sort((a, b) => new Date(a.occIso) - new Date(b.occIso));
+  const eventOccurrences = getEventOccurrences(events);
 
   const checkDayAgenda = (day) => {
     if (!day) return { event: false, shift: false };
     const checkDateStr = new Date(currentYear, currentMonth, day).toDateString();
     const hasShift = shifts.some(s => s.status.toUpperCase() === 'CONFIRMADO' && new Date(s.date).toDateString() === checkDateStr);
-    const hasEvent = eventOccurrences.some(o => participatingEvents.includes(o.occId) && new Date(o.occIso).toDateString() === checkDateStr);
+    const hasEvent = eventOccurrences.some(o => rsvpEvents.includes(o.occId) && new Date(o.occIso).toDateString() === checkDateStr);
     return { event: hasEvent, shift: hasShift };
   };
 
@@ -167,7 +138,10 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
       const res = await apiFetch(`/api/events/${eventId}/checkin`, { method: 'POST', body: { code } });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        if (data.refId) setParticipatingEvents(prev => prev.includes(data.refId) ? prev : [...prev, data.refId]);
+        if (data.refId) {
+          setRsvpEvents(prev => prev.includes(data.refId) ? prev : [...prev, data.refId]);
+          setCheckedInEvents(prev => prev.includes(data.refId) ? prev : [...prev, data.refId]);
+        }
         setUser(prev => ({ ...prev, points: data.points ?? prev.points }));
         showNotification(data.already ? 'Presença já confirmada neste evento.' : `Presença confirmada! +${data.awarded} Zion Points! 🎉`);
       } else showNotification(data.error || 'Código de check-in inválido.');
@@ -206,7 +180,8 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
       const res = await apiFetch(`/api/events/${checkinEvent.id}/checkin`, { method: 'POST', body: { code: checkinCode.trim(), refId: checkinEvent.occId } });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
-        setParticipatingEvents(prev => [...prev, checkinEvent.occId]);
+        setRsvpEvents(prev => prev.includes(checkinEvent.occId) ? prev : [...prev, checkinEvent.occId]);
+        setCheckedInEvents(prev => prev.includes(checkinEvent.occId) ? prev : [...prev, checkinEvent.occId]);
         setUser(prev => ({ ...prev, points: data.points ?? prev.points }));
         setCheckinEvent(null); setCheckinCode('');
         if (data.already) showNotification('Você já fez check-in neste evento.');
@@ -216,10 +191,11 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
     finally { setCheckingIn(false); }
   };
 
-  // Participar (RSVP): confirma presença sem código — marca no calendário e credita pontos
+  // Participar (RSVP): confirma presença sem código — marca no calendário e credita pontos.
+  // Depois de confirmado, o botão vira "Check-in" (confirmação real de presença no local).
   const handleParticipate = async (ev) => {
-    if (participatingEvents.includes(ev.occId)) return;
-    setParticipatingEvents(prev => [...prev, ev.occId]); // otimista
+    if (rsvpEvents.includes(ev.occId)) return;
+    setRsvpEvents(prev => [...prev, ev.occId]); // otimista
     try {
       const res = await apiFetch(`/api/events/${ev.id}/participate`, { method: 'POST', body: { refId: ev.occId } });
       const data = await res.json().catch(() => ({}));
@@ -228,11 +204,11 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
         if (data.already) showNotification('Presença já confirmada neste evento.');
         else showNotification(`Presença confirmada! +${data.awarded} Zion Points! 🎉`);
       } else {
-        setParticipatingEvents(prev => prev.filter(id => id !== ev.occId)); // desfaz otimista
+        setRsvpEvents(prev => prev.filter(id => id !== ev.occId)); // desfaz otimista
         showNotification(data.error || 'Não foi possível confirmar presença.');
       }
     } catch {
-      setParticipatingEvents(prev => prev.filter(id => id !== ev.occId));
+      setRsvpEvents(prev => prev.filter(id => id !== ev.occId));
       showNotification('Falha de rede ao confirmar presença.');
     }
   };
@@ -386,10 +362,11 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
             </div>
           ) : (
             futureEvents.map(ev => {
-              const isParticipating = participatingEvents.includes(ev.occId);
+              const hasRsvp = rsvpEvents.includes(ev.occId);
+              const hasCheckedIn = checkedInEvents.includes(ev.occId);
               const recurring = ev.recurrence && ev.recurrence !== 'NONE';
               return (
-                <div key={ev.occId} className={`bg-surface-card p-4 rounded-default shadow-sm border ${isParticipating ? 'border-brand-primary/30' : 'border-white/5'} flex flex-col sm:flex-row justify-between sm:items-center gap-4 transition-all duration-300`}>
+                <div key={ev.occId} className={`bg-surface-card p-4 rounded-default shadow-sm border ${hasRsvp ? 'border-brand-primary/30' : 'border-white/5'} flex flex-col sm:flex-row justify-between sm:items-center gap-4 transition-all duration-300`}>
                   <div>
                     <div className="font-bold text-text-primary flex items-center gap-2">
                       {ev.title}
@@ -397,13 +374,12 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
                     </div>
                     <div className="text-sm text-text-muted flex items-center gap-1 mt-1 capitalize"><Clock className="w-3 h-3 text-brand-primary"/> {formatData(ev.occIso)}</div>
                   </div>
-                  {isParticipating ? (
+                  {hasCheckedIn ? (
                     <span className="flex items-center justify-center gap-1 text-brand-primary text-sm font-bold bg-brand-primary/10 border border-brand-primary/20 px-4 py-2 rounded-default shrink-0"><CheckCircle className="w-4 h-4"/> Confirmado</span>
+                  ) : hasRsvp ? (
+                    <button onClick={() => { setCheckinCode(''); setCheckinEvent(ev); }} className="flex items-center justify-center gap-1.5 bg-brand-primary text-white px-4 py-2 rounded-default text-sm font-semibold hover:bg-brand-secondary transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 shrink-0"><Clock className="w-4 h-4"/> Check-in</button>
                   ) : (
-                    <div className="flex gap-2 shrink-0">
-                      <button onClick={() => handleParticipate(ev)} className="flex items-center justify-center gap-1.5 bg-brand-primary text-white px-4 py-2 rounded-default text-sm font-semibold hover:bg-brand-secondary transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><CheckCircle className="w-4 h-4"/> Participar</button>
-                      <button onClick={() => { setCheckinCode(''); setCheckinEvent(ev); }} className="flex items-center justify-center gap-1.5 bg-transparent text-brand-primary border border-brand-primary/30 px-4 py-2 rounded-default text-sm font-semibold hover:bg-brand-primary hover:text-white transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Clock className="w-4 h-4"/> Check-in</button>
-                    </div>
+                    <button onClick={() => handleParticipate(ev)} className="flex items-center justify-center gap-1.5 bg-brand-primary text-white px-4 py-2 rounded-default text-sm font-semibold hover:bg-brand-secondary transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 shrink-0"><CheckCircle className="w-4 h-4"/> Participar</button>
                   )}
                 </div>
               );

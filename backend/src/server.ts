@@ -541,6 +541,11 @@ app.post('/api/events/:id/checkin', h(async (req, res) => {
   // refId deve ser o evento ou uma ocorrência dele (anti-farm)
   const refId = String(req.body.refId || ev.id);
   if (refId !== ev.id && !refId.startsWith(`${ev.id}@`)) return res.status(400).json({ error: 'Referência de evento inválida.' });
+  await prisma.eventParticipation.upsert({
+    where: { userId_refId: { userId: req.user!.id, refId } },
+    update: { checkedInAt: new Date() },
+    create: { userId: req.user!.id, eventId: ev.id, refId, checkedInAt: new Date() },
+  });
   const award = await awardPoints(req.user!.id, 'EVENT_PARTICIPATION', refId, 20);
   const user = await prisma.user.findUnique({ where: { id: req.user!.id }, select: userPublic });
   res.status(201).json({ awarded: award.awarded, already: award.already, points: user?.points, refId });
@@ -552,9 +557,29 @@ app.post('/api/events/:id/participate', h(async (req, res) => {
   if (!ev) return res.status(404).json({ error: 'Evento não encontrado.' });
   const refId = String(req.body.refId || ev.id); // evento ou ocorrência dele (anti-farm)
   if (refId !== ev.id && !refId.startsWith(`${ev.id}@`)) return res.status(400).json({ error: 'Referência de evento inválida.' });
+  await prisma.eventParticipation.upsert({
+    where: { userId_refId: { userId: req.user!.id, refId } },
+    update: {},
+    create: { userId: req.user!.id, eventId: ev.id, refId },
+  });
   const award = await awardPoints(req.user!.id, 'EVENT_PARTICIPATION', refId, 20);
   const user = await prisma.user.findUnique({ where: { id: req.user!.id }, select: userPublic });
   res.status(201).json({ awarded: award.awarded, already: award.already, points: user?.points, refId });
+}));
+
+// Minhas confirmações (RSVP e check-in) — usado para alternar o botão Participar/Check-in
+app.get('/api/events/my-participations', h(async (req, res) => res.json(await prisma.eventParticipation.findMany({ where: { userId: req.user!.id }, select: { refId: true, rsvpAt: true, checkedInAt: true } }))));
+
+// Admin: quantos confirmaram presença (RSVP) vs quantos fizeram check-in de fato, por evento
+app.get('/api/events/stats', staffOnly, h(async (req, res) => {
+  const rows = await prisma.eventParticipation.findMany({ select: { eventId: true, checkedInAt: true } });
+  const map: Record<string, { eventId: string; rsvpCount: number; checkinCount: number }> = {};
+  for (const r of rows) {
+    if (!map[r.eventId]) map[r.eventId] = { eventId: r.eventId, rsvpCount: 0, checkinCount: 0 };
+    map[r.eventId].rsvpCount++;
+    if (r.checkedInAt) map[r.eventId].checkinCount++;
+  }
+  res.json(Object.values(map));
 }));
 
 // --- COMUNICADOS ---

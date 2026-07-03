@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import Avatar from '../components/Avatar';
 import { getAreaIconComponent } from '../utils/areaIcons';
+import { getEventOccurrences } from '../utils/eventOccurrences';
 import {
   CalendarDays, Smile, Megaphone, Briefcase, Clock,
   CheckCircle, GraduationCap, Users, MessageSquare, ShieldCheck,
@@ -69,6 +70,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   const [areaPositions,    setAreaPositions]    = useState({}); // { areaId: [AreaPosition] }
   const [newPositionName,  setNewPositionName]  = useState({}); // { areaId: string }
   const [events,           setEvents]           = useState([]);
+  const [eventRsvps,       setEventRsvps]       = useState([]); // refIds de eventos VOLUNTARIO com presença confirmada
   const [scheduleEventId,  setScheduleEventId]  = useState({}); // { areaId: eventId }
   const [availableForEvent,setAvailableForEvent]= useState({}); // { areaId: [userId] }
   const [isLoading,        setIsLoading]        = useState(true);
@@ -231,7 +233,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     const fetchData = async () => {
       try {
         const query = user?.id ? `?userId=${user.id}` : '';
-        const [resAreas, resMine, resShifts, resAnn, resPoints, resPray, resEvents] = await Promise.all([
+        const [resAreas, resMine, resShifts, resAnn, resPoints, resPray, resEvents, resEventParts] = await Promise.all([
           apiFetch(`/api/areas`).catch(() => null),
           user?.id ? apiFetch(`/api/areas/my-participations?userId=${user.id}`).catch(() => null) : null,
           apiFetch(`/api/shifts${query}`).catch(() => null),
@@ -239,12 +241,14 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
           apiFetch(`/api/points/mine`).catch(() => null),
           apiFetch(`/api/prayer-requests/access`).catch(() => null),
           apiFetch(`/api/events`).catch(() => null),
+          apiFetch(`/api/events/my-participations`).catch(() => null),
         ]);
         if (resAreas && resAreas.ok) setAreas(await resAreas.json());
         if (resMine && resMine.ok) setMyAreas(await resMine.json());
         if (resShifts && resShifts.ok) setShifts(await resShifts.json());
         if (resAnn && resAnn.ok) setAnnouncements(await resAnn.json());
         if (resEvents && resEvents.ok) setEvents(await resEvents.json());
+        if (resEventParts && resEventParts.ok) setEventRsvps((await resEventParts.json()).map(p => p.refId));
         if (resPoints && resPoints.ok) {
           const awards = await resPoints.json();
           if (awards.some(a => a.ruleKey === 'TRAINING_COMPLETION')) setTrainingProgress(100);
@@ -399,6 +403,26 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
         showNotification('Vaga aceita! Você está escalado.');
       } else { const e = await res.json().catch(() => ({})); showNotification(e.error || 'Falha ao aceitar a vaga.'); }
     } catch { showNotification('Falha de rede.'); }
+  };
+
+  // RSVP em evento de Voluntário (ex.: Escola ZAO) — mesmo endpoint usado no Início
+  const handleParticipateEvent = async (occ) => {
+    if (eventRsvps.includes(occ.occId)) return;
+    setEventRsvps(prev => [...prev, occ.occId]); // otimista
+    try {
+      const res = await apiFetch(`/api/events/${occ.id}/participate`, { method: 'POST', body: { refId: occ.occId } });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setUser(prev => ({ ...prev, points: data.points ?? prev.points }));
+        showNotification(data.already ? 'Presença já confirmada neste evento.' : `Presença confirmada! +${data.awarded} Zion Points! 🎉`);
+      } else {
+        setEventRsvps(prev => prev.filter(id => id !== occ.occId));
+        showNotification(data.error || 'Não foi possível confirmar presença.');
+      }
+    } catch {
+      setEventRsvps(prev => prev.filter(id => id !== occ.occId));
+      showNotification('Falha de rede ao confirmar presença.');
+    }
   };
 
   // Solicitar entrada (PENDENTE) — persiste via POST /api/areas/:id/request
@@ -599,8 +623,35 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
 
   // ─── render ──────────────────────────────────────────────────────────────
 
+  // Eventos de Voluntário (ex.: Escola ZAO) — em destaque no topo da tela
+  const volunteerEventOccurrences = getEventOccurrences(events.filter(e => e.type === 'VOLUNTARIO'));
+
   return (
     <div className="space-y-6">
+      {volunteerEventOccurrences.length > 0 && (
+        <div className="bg-gradient-to-r from-amber-500/15 to-brand-primary/15 border border-amber-500/30 rounded-default p-4 space-y-3">
+          <h3 className="text-sm font-bold text-amber-300 flex items-center gap-2 uppercase tracking-wide"><CalendarDays className="w-4 h-4"/> Eventos de Voluntariado</h3>
+          <div className="space-y-2">
+            {volunteerEventOccurrences.map(occ => {
+              const confirmed = eventRsvps.includes(occ.occId);
+              return (
+                <div key={occ.occId} className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-surface-card border border-white/10 rounded-md p-3">
+                  <div>
+                    <div className="font-bold text-text-primary">{occ.title}</div>
+                    <div className="text-xs text-text-muted flex items-center gap-1 mt-0.5 capitalize"><Clock className="w-3 h-3 text-brand-primary"/> {formatData(occ.occIso)}{occ.location ? ` • ${occ.location}` : ''}</div>
+                  </div>
+                  {confirmed ? (
+                    <span className="flex items-center justify-center gap-1.5 text-brand-primary text-sm font-bold bg-brand-primary/10 border border-brand-primary/20 px-4 py-2 rounded-default shrink-0"><CheckCircle className="w-4 h-4"/> Confirmado</span>
+                  ) : (
+                    <button onClick={() => handleParticipateEvent(occ)} className="flex items-center justify-center gap-1.5 bg-brand-primary text-white px-4 py-2 rounded-default text-sm font-semibold hover:bg-brand-secondary transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 shrink-0"><CheckCircle className="w-4 h-4"/> Participar</button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div>
         <h2 className="text-xl font-display font-bold text-text-primary">Voluntariado</h2>
         <p className="text-sm text-text-muted mt-1">Sirva a casa e desenvolva seus dons.</p>
