@@ -4,7 +4,7 @@ import { compressImage, fileToDataUrl } from '../utils/image';
 import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Users, Eye, Briefcase, Gift, Ticket, Tag, CheckCircle, Zap, BarChart3, BookOpen, Award, QrCode, Bug } from 'lucide-react';
 
 // Locais pré-definidos para eventos (menu de seleção); "Outro" libera um campo de texto livre.
-const EVENT_LOCATIONS = ['Templo Principal', 'Auditório', 'Sala de Reuniões', 'Keola Coffee', 'Área Externa', 'Online', 'A definir'];
+const EVENT_LOCATIONS = ['Campus Zion RP', 'Templo Principal', 'Auditório', 'Sala de Reuniões', 'Keola Coffee', 'Área Externa', 'Online', 'A definir'];
 
 const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   const [activeTab, setActiveTab] = useState('painel');
@@ -43,7 +43,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   
   const [eventDateStr, setEventDateStr] = useState(''); // formato nativo YYYY-MM-DD
   const [eventTimeStr, setEventTimeStr] = useState('');
-  const [eventCommonData, setEventCommonData] = useState({ title: '', location: '', type: 'GERAL', recurrence: 'NONE' });
+  const [eventCommonData, setEventCommonData] = useState({ title: '', location: 'Campus Zion RP', type: 'GERAL', recurrence: 'NONE' });
   const [eventLocationCustom, setEventLocationCustom] = useState(false); // true = campo "Outro" (texto livre)
 
   const [showProductForm, setShowProductForm] = useState(false);
@@ -677,7 +677,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <h3 className="text-lg font-bold text-text-primary">Agenda de Eventos</h3>
-                <button onClick={() => { setShowEventForm(!showEventForm); setEditingEventId(null); setEventDateStr(''); setEventTimeStr(''); setEventCommonData({ title: '', location: '', type: 'GERAL', recurrence: 'NONE' }); setEventLocationCustom(false); }} className="bg-brand-primary text-white px-4 py-2 rounded-md font-bold text-sm flex gap-2 items-center outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                <button onClick={() => { setShowEventForm(!showEventForm); setEditingEventId(null); setEventDateStr(''); setEventTimeStr(''); setEventCommonData({ title: '', location: 'Campus Zion RP', type: 'GERAL', recurrence: 'NONE' }); setEventLocationCustom(false); }} className="bg-brand-primary text-white px-4 py-2 rounded-md font-bold text-sm flex gap-2 items-center outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
                   {showEventForm ? <X className="w-4 h-4"/> : <Plus className="w-4 h-4"/>} {showEventForm ? 'Cancelar' : 'Novo Evento'}
                 </button>
               </div>
