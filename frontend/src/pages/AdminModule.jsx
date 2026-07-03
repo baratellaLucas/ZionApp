@@ -3,6 +3,9 @@ import { apiFetch } from '../api';
 import { compressImage, fileToDataUrl } from '../utils/image';
 import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Users, Eye, Briefcase, Gift, Ticket, Tag, CheckCircle, Zap, BarChart3, BookOpen, Award, QrCode, Bug } from 'lucide-react';
 
+// Locais pré-definidos para eventos (menu de seleção); "Outro" libera um campo de texto livre.
+const EVENT_LOCATIONS = ['Templo Principal', 'Auditório', 'Sala de Reuniões', 'Keola Coffee', 'Área Externa', 'Online', 'A definir'];
+
 const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   const [activeTab, setActiveTab] = useState('painel');
   
@@ -41,6 +44,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   const [eventDateStr, setEventDateStr] = useState(''); // formato nativo YYYY-MM-DD
   const [eventTimeStr, setEventTimeStr] = useState('');
   const [eventCommonData, setEventCommonData] = useState({ title: '', location: '', type: 'GERAL', recurrence: 'NONE' });
+  const [eventLocationCustom, setEventLocationCustom] = useState(false); // true = campo "Outro" (texto livre)
 
   const [showProductForm, setShowProductForm] = useState(false);
   const [editingProductId, setEditingProductId] = useState(null);
@@ -261,6 +265,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
     setEventDateStr(`${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`);
     setEventTimeStr(`${p(d.getHours())}:${p(d.getMinutes())}`);
     setEventCommonData({ title: ev.title, location: ev.location || '', type: ev.type, recurrence: ev.recurrence || 'NONE' });
+    setEventLocationCustom(!!ev.location && !EVENT_LOCATIONS.includes(ev.location));
     setShowEventForm(true);
   };
 
@@ -654,7 +659,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <h3 className="text-lg font-bold text-text-primary">Agenda de Eventos</h3>
-                <button onClick={() => { setShowEventForm(!showEventForm); setEditingEventId(null); setEventDateStr(''); setEventTimeStr(''); setEventCommonData({ title: '', location: '', type: 'GERAL', recurrence: 'NONE' }); }} className="bg-brand-primary text-white px-4 py-2 rounded-md font-bold text-sm flex gap-2 items-center outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                <button onClick={() => { setShowEventForm(!showEventForm); setEditingEventId(null); setEventDateStr(''); setEventTimeStr(''); setEventCommonData({ title: '', location: '', type: 'GERAL', recurrence: 'NONE' }); setEventLocationCustom(false); }} className="bg-brand-primary text-white px-4 py-2 rounded-md font-bold text-sm flex gap-2 items-center outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
                   {showEventForm ? <X className="w-4 h-4"/> : <Plus className="w-4 h-4"/>} {showEventForm ? 'Cancelar' : 'Novo Evento'}
                 </button>
               </div>
@@ -688,7 +693,25 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                       </select>
                     </div>
                   </div>
-                  <div><label className="text-xs text-text-muted mb-1 block">Localização</label><input required type="text" value={eventCommonData.location} onChange={e => setEventCommonData({...eventCommonData, location: e.target.value})} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 focus:border-brand-primary"/></div>
+                  <div>
+                    <label className="text-xs text-text-muted mb-1 block">Localização</label>
+                    <select
+                      required={!eventLocationCustom}
+                      value={eventLocationCustom ? 'OUTRO' : eventCommonData.location}
+                      onChange={e => {
+                        if (e.target.value === 'OUTRO') { setEventLocationCustom(true); setEventCommonData({ ...eventCommonData, location: '' }); }
+                        else { setEventLocationCustom(false); setEventCommonData({ ...eventCommonData, location: e.target.value }); }
+                      }}
+                      className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 focus:border-brand-primary"
+                    >
+                      <option value="" disabled>Selecione um local</option>
+                      {EVENT_LOCATIONS.map(loc => <option key={loc} value={loc}>{loc}</option>)}
+                      <option value="OUTRO">Outro (digitar)</option>
+                    </select>
+                    {eventLocationCustom && (
+                      <input required type="text" autoFocus value={eventCommonData.location} onChange={e => setEventCommonData({ ...eventCommonData, location: e.target.value })} placeholder="Digite o local" className="w-full mt-2 bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 focus:border-brand-primary"/>
+                    )}
+                  </div>
                   <button type="submit" className="w-full bg-brand-primary text-white py-2 rounded-md font-bold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">{editingEventId ? 'Salvar Edição' : 'Agendar Evento'}</button>
                 </form>
               )}
