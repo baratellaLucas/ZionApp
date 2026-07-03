@@ -41,6 +41,9 @@ const LinksModule = ({ user, showNotification }) => {
   const [linkRequests, setLinkRequests] = useState({});
   const [linkToCancel, setLinkToCancel] = useState(null);
   const [myParticipations, setMyParticipations] = useState({});
+  const [myParticipationRows, setMyParticipationRows] = useState([]); // linhas completas (p/ mostrar convites)
+  const [allUsers, setAllUsers] = useState([]);
+  const [inviteDraft, setInviteDraft] = useState({}); // { linkId: userId }
 
   // Mapeia o nome do dia (PT) para o índice de getDay() (0=Domingo … 6=Sábado)
   const DAY_TO_NUM = { 'Domingo': 0, 'Segunda': 1, 'Terça': 2, 'Quarta': 3, 'Quinta': 4, 'Sexta': 5, 'Sábado': 6 };
@@ -88,13 +91,18 @@ const LinksModule = ({ user, showNotification }) => {
     const fetchData = async () => {
       try {
         setIsLoading(true);
-        const resLinks = await apiFetch('/api/links').catch(() => null);
+        const [resLinks, resUsers] = await Promise.all([
+          apiFetch('/api/links').catch(() => null),
+          apiFetch('/api/users').catch(() => null),
+        ]);
         if (resLinks && resLinks.ok) setLinks(await resLinks.json());
+        if (resUsers && resUsers.ok) setAllUsers(await resUsers.json());
 
         if (user?.id) {
           const resMine = await apiFetch(`/api/links/my-participations?userId=${user.id}`).catch(() => null);
           if (resMine && resMine.ok) {
             const dataMine = await resMine.json();
+            setMyParticipationRows(dataMine);
             const map = {};
             dataMine.forEach(p => { map[p.linkId] = p.status; });
             setMyParticipations(map);
@@ -123,6 +131,10 @@ const LinksModule = ({ user, showNotification }) => {
   const activeParticipationsCount = Object.values(myParticipations).filter(s => s === 'PENDENTE' || s === 'APROVADO').length;
   const reachedLimit = activeParticipationsCount >= MAX_LINKS_PER_PERSON;
   const myActiveLinks = links.filter(l => l.leaderId === user?.id || myParticipations[l.id] === 'APROVADO');
+  const myPendingInvites = myParticipationRows
+    .filter(p => p.status === 'CONVITE_PENDENTE')
+    .map(p => ({ ...p, link: p.link || links.find(l => l.id === p.linkId) }))
+    .filter(p => p.link);
 
   const handleRequestParticipation = async (link) => {
     if (myParticipations[link.id] || reachedLimit || !user?.id) return;
@@ -180,6 +192,31 @@ const LinksModule = ({ user, showNotification }) => {
     } catch (e) {
       showNotification(`Falha na rede ao aprovar.`);
     }
+  };
+
+  // Líder convida um membro diretamente (fica pendente até o convidado aceitar/recusar)
+  const handleInviteMember = async (linkId) => {
+    const userId = inviteDraft[linkId];
+    if (!userId) return;
+    try {
+      const res = await apiFetch(`/api/links/${linkId}/invite`, { method: 'POST', body: { userId } });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setInviteDraft(prev => ({ ...prev, [linkId]: '' }));
+        showNotification('Convite enviado!');
+      } else showNotification(data.error || 'Falha ao convidar.');
+    } catch { showNotification('Falha de rede.'); }
+  };
+
+  const handleRespondInvite = async (linkId, accept) => {
+    try {
+      const res = await apiFetch(`/api/links/${linkId}/invite/${accept ? 'accept' : 'decline'}`, { method: 'POST' });
+      if (res.ok) {
+        setMyParticipationRows(prev => accept ? prev.map(p => p.linkId === linkId ? { ...p, status: 'APROVADO' } : p) : prev.filter(p => p.linkId !== linkId));
+        setMyParticipations(prev => { const next = { ...prev }; if (accept) next[linkId] = 'APROVADO'; else delete next[linkId]; return next; });
+        showNotification(accept ? 'Você entrou no Link! 🎉' : 'Convite recusado.');
+      } else showNotification('Falha ao responder o convite.');
+    } catch { showNotification('Falha de rede.'); }
   };
 
   const handleSaveLinkEdit = async (e) => {
@@ -358,6 +395,23 @@ const LinksModule = ({ user, showNotification }) => {
 
       {activeTab === 'meus_links' ? (
         <div className="space-y-6 animate-in fade-in duration-300">
+           {myPendingInvites.length > 0 && (
+             <div className="space-y-2">
+               <h4 className="text-xs font-bold uppercase tracking-wider text-text-muted">Convites recebidos ({myPendingInvites.length})</h4>
+               {myPendingInvites.map(inv => (
+                 <div key={inv.id} className="bg-brand-primary/5 border border-brand-primary/30 rounded-default p-3 flex items-center justify-between gap-2">
+                   <div className="min-w-0">
+                     <div className="font-bold text-white text-sm truncate">{inv.link.name}</div>
+                     <div className="text-xs text-text-muted truncate">{inv.link.leader?.name} te convidou para participar</div>
+                   </div>
+                   <div className="flex gap-1 shrink-0">
+                     <button onClick={() => handleRespondInvite(inv.linkId, true)} className="text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Aceitar</button>
+                     <button onClick={() => handleRespondInvite(inv.linkId, false)} className="text-xs font-bold text-text-muted hover:text-red-400 px-2 py-1.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Recusar</button>
+                   </div>
+                 </div>
+               ))}
+             </div>
+           )}
            {editingLink ? (
               <div className="bg-surface-card p-5 rounded-default border border-brand-primary/30 shadow-level-2">
                 <div className="flex justify-between items-center mb-4">
@@ -432,6 +486,13 @@ const LinksModule = ({ user, showNotification }) => {
                             ))}
                           </div>
                         )}
+                        <div className="flex gap-2 mt-4 pt-4 border-t border-white/5">
+                          <select value={inviteDraft[link.id] || ''} onChange={e => setInviteDraft(prev => ({ ...prev, [link.id]: e.target.value }))} className="flex-1 bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                            <option value="">Convidar membro...</option>
+                            {allUsers.filter(u => u.id !== user?.id).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                          </select>
+                          <button onClick={() => handleInviteMember(link.id)} disabled={!inviteDraft[link.id]} className="bg-brand-primary text-white px-4 rounded-md font-bold text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 disabled:opacity-40">Convidar</button>
+                        </div>
                       </div>
                     )}
                   </div>

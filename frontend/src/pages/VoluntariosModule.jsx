@@ -74,6 +74,9 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   const [events,           setEvents]           = useState([]);
   const [eventRsvps,       setEventRsvps]       = useState([]); // refIds de eventos VOLUNTARIO com RSVP feito
   const [eventCheckins,    setEventCheckins]    = useState([]); // refIds com check-in real (pontos só aqui)
+  const [allUsers,         setAllUsers]          = useState([]);
+  const [inviteDraft,      setInviteDraft]       = useState({}); // { areaId: userId }
+  const [myAreaInvites,    setMyAreaInvites]     = useState([]); // participações CONVITE_PENDENTE (linhas completas)
   const [checkinEvent,     setCheckinEvent]     = useState(null); // ocorrência em check-in
   const [checkinCode,      setCheckinCode]      = useState('');
   const [checkingInEvent,  setCheckingInEvent]  = useState(false);
@@ -240,7 +243,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     const fetchData = async () => {
       try {
         const query = user?.id ? `?userId=${user.id}` : '';
-        const [resAreas, resMine, resShifts, resAnn, resPoints, resPray, resEvents, resEventParts] = await Promise.all([
+        const [resAreas, resMine, resShifts, resAnn, resPoints, resPray, resEvents, resEventParts, resUsers] = await Promise.all([
           apiFetch(`/api/areas`).catch(() => null),
           user?.id ? apiFetch(`/api/areas/my-participations?userId=${user.id}`).catch(() => null) : null,
           apiFetch(`/api/shifts${query}`).catch(() => null),
@@ -249,9 +252,15 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
           apiFetch(`/api/prayer-requests/access`).catch(() => null),
           apiFetch(`/api/events`).catch(() => null),
           apiFetch(`/api/events/my-participations`).catch(() => null),
+          apiFetch(`/api/users`).catch(() => null),
         ]);
         if (resAreas && resAreas.ok) setAreas(await resAreas.json());
-        if (resMine && resMine.ok) setMyAreas(await resMine.json());
+        if (resMine && resMine.ok) {
+          const mine = await resMine.json();
+          setMyAreas(mine);
+          setMyAreaInvites(mine.filter(p => p.status === 'CONVITE_PENDENTE'));
+        }
+        if (resUsers && resUsers.ok) setAllUsers(await resUsers.json());
         if (resShifts && resShifts.ok) setShifts(await resShifts.json());
         if (resAnn && resAnn.ok) setAnnouncements(await resAnn.json());
         if (resEvents && resEvents.ok) setEvents(await resEvents.json());
@@ -313,6 +322,33 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     }
   };
 
+  // Líder convida um membro diretamente (fica pendente até o convidado aceitar/recusar)
+  const handleInviteMember = async (areaId) => {
+    const userId = inviteDraft[areaId];
+    if (!userId) return;
+    try {
+      const res = await apiFetch(`/api/areas/${areaId}/invite`, { method: 'POST', body: { userId } });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { setInviteDraft(prev => ({ ...prev, [areaId]: '' })); showNotification('Convite enviado!'); }
+      else showNotification(data.error || 'Falha ao convidar.');
+    } catch { showNotification('Falha de rede.'); }
+  };
+
+  const handleRespondAreaInvite = async (areaId, accept) => {
+    try {
+      const res = await apiFetch(`/api/areas/${areaId}/invite/${accept ? 'accept' : 'decline'}`, { method: 'POST' });
+      if (res.ok) {
+        setMyAreaInvites(prev => prev.filter(p => p.areaId !== areaId));
+        if (accept) {
+          setMyAreas(prev => prev.map(p => p.areaId === areaId ? { ...p, status: 'APROVADO' } : p));
+        } else {
+          setMyAreas(prev => prev.filter(p => p.areaId !== areaId));
+        }
+        showNotification(accept ? 'Você entrou na área! 🎉' : 'Convite recusado.');
+      } else showNotification('Falha ao responder o convite.');
+    } catch { showNotification('Falha de rede.'); }
+  };
+
   // Aprovar (confirma saída) / recusar (mantém na equipe) um pedido de saída da área
   const handleLeaveRequest = async (participationId, areaId, userId, approveLeave) => {
     try {
@@ -370,7 +406,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   // Itens de "Minhas Áreas": áreas lideradas + participações (sem duplicar as lideradas)
   const myAreaItems = [
     ...ledAreas.map(a => ({ id: `lead-${a.id}`, areaId: a.id, area: a, status: 'APROVADO', role: 'Líder da Área', isLeader: true })),
-    ...myAreas.filter(p => !ledAreas.some(a => a.id === p.areaId)),
+    ...myAreas.filter(p => !ledAreas.some(a => a.id === p.areaId) && p.status !== 'CONVITE_PENDENTE'),
   ];
 
   const futureShifts = shifts.filter(s => new Date(s.date) >= new Date());
@@ -778,6 +814,28 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
             </div>
           )}
 
+          {myAreaInvites.length > 0 && (
+            <div className="space-y-2">
+              <h4 className="text-xs font-bold uppercase tracking-wider text-text-muted">Convites recebidos ({myAreaInvites.length})</h4>
+              {myAreaInvites.map(inv => {
+                const areaObj = inv.area || areas.find(a => a.id === inv.areaId);
+                if (!areaObj) return null;
+                return (
+                  <div key={inv.id} className="bg-brand-primary/5 border border-brand-primary/30 rounded-default p-3 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="font-bold text-white text-sm truncate">{areaObj.name}</div>
+                      <div className="text-xs text-text-muted truncate">{areaObj.leader?.name || 'O líder'} te convidou para servir nessa área</div>
+                    </div>
+                    <div className="flex gap-1 shrink-0">
+                      <button onClick={() => handleRespondAreaInvite(inv.areaId, true)} className="text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white px-3 py-1.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Aceitar</button>
+                      <button onClick={() => handleRespondAreaInvite(inv.areaId, false)} className="text-xs font-bold text-text-muted hover:text-red-400 px-2 py-1.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Recusar</button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+
           {myAreaItems.length === 0 ? (
             <div className="text-center text-text-muted py-10 bg-surface-card rounded-default border border-dashed border-white/10">Você ainda não faz parte de nenhuma área. Explore as opções!</div>
           ) : (
@@ -1027,6 +1085,17 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                     <div>
                       <h4 className="text-sm font-bold text-text-primary mb-3 flex items-center gap-2"><Users className="w-4 h-4 text-brand-primary"/> Solicitações de Entrada/Saída</h4>
                       {renderMembershipRequests(areaId)}
+                    </div>
+
+                    <div className="border-t border-white/5 pt-8">
+                      <h4 className="text-sm font-bold text-text-primary mb-3 flex items-center gap-2"><Users className="w-4 h-4 text-brand-primary"/> Convidar Membro</h4>
+                      <div className="flex gap-2">
+                        <select value={inviteDraft[areaId] || ''} onChange={e => setInviteDraft(prev => ({ ...prev, [areaId]: e.target.value }))} className="flex-1 bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                          <option value="">Selecione um membro...</option>
+                          {allUsers.filter(u => u.id !== user?.id).map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                        </select>
+                        <button onClick={() => handleInviteMember(areaId)} disabled={!inviteDraft[areaId]} className="bg-brand-primary text-white px-4 rounded-md font-bold text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 disabled:opacity-40">Convidar</button>
+                      </div>
                     </div>
 
                     <div className="border-t border-white/5 pt-8">

@@ -187,6 +187,7 @@ const linkSchema = z.object({
 });
 const leaderPatchSchema = z.object({ leaderId: z.string().min(1) });
 const statusSchema = z.object({ status: z.string().min(1) });
+const inviteSchema = z.object({ userId: z.string().min(1) });
 const bugReportSchema = z.object({ title: z.string().min(1).max(120), description: z.string().min(1).max(4000), type: z.enum(['BUG', 'SUGESTAO']).optional() });
 const prayerSchema = z.object({ content: z.string().min(1).max(2000) });
 const messageSchema = z.object({ content: z.string().min(1), category: z.string().optional(), pollOptions: z.array(z.string().min(1)).min(2).max(6).optional() });
@@ -658,6 +659,32 @@ app.delete('/api/areas/:id/request', h(async (req, res) => {
   res.json({ message: "Cancelado" });
 }));
 app.get('/api/areas/:id/participations', h(async (req, res) => res.json(await prisma.areaParticipation.findMany({ where: { areaId: pid(req) }, include: { user: { select: userPublic } }, orderBy: { createdAt: 'asc' } }))));
+
+// Líder convida um membro (fica CONVITE_PENDENTE até o convidado aceitar/recusar)
+app.post('/api/areas/:id/invite', validate(inviteSchema), h(async (req, res) => {
+  const area = await prisma.area.findUnique({ where: { id: pid(req) } });
+  if (!area) return res.status(404).json({ error: 'Área não encontrada.' });
+  if (area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode convidar membros.' });
+  try {
+    const part = await prisma.areaParticipation.create({ data: { userId: req.body.userId, areaId: area.id, status: 'CONVITE_PENDENTE' } });
+    notify(req.body.userId, 'INVITE', 'Convite para servir', `Você foi convidado para servir na área "${area.name}".`, area.id, 'voluntarios');
+    res.status(201).json(part);
+  } catch { res.status(409).json({ error: 'Essa pessoa já participa ou já tem uma solicitação/convite pendente.' }); }
+}));
+app.post('/api/areas/:id/invite/accept', h(async (req, res) => {
+  const m = await prisma.areaParticipation.findUnique({ where: { userId_areaId: { userId: req.user!.id, areaId: pid(req) } } });
+  if (!m || m.status !== 'CONVITE_PENDENTE') return res.status(404).json({ error: 'Convite não encontrado.' });
+  const [updated, me] = await Promise.all([
+    prisma.areaParticipation.update({ where: { id: m.id }, data: { status: 'APROVADO' }, include: { area: true } }),
+    prisma.user.findUnique({ where: { id: req.user!.id }, select: { name: true } }),
+  ]);
+  notify(updated.area.leaderId, 'INFO', 'Convite aceito', `${me?.name || 'Alguém'} aceitou o convite para a área "${updated.area.name}".`, updated.area.id, 'voluntarios');
+  res.json({ message: 'Você entrou!' });
+}));
+app.post('/api/areas/:id/invite/decline', h(async (req, res) => {
+  await prisma.areaParticipation.deleteMany({ where: { userId: req.user!.id, areaId: pid(req), status: 'CONVITE_PENDENTE' } });
+  res.json({ message: 'Convite recusado.' });
+}));
 app.patch('/api/areas/participations/:id', validate(statusSchema), h(async (req, res) => {
   const part = await prisma.areaParticipation.findUnique({ where: { id: pid(req) }, include: { area: true } });
   if (!part) return res.status(404).json({ error: 'Participação não encontrada.' });
@@ -869,6 +896,32 @@ app.post('/api/links/:id/request', h(async (req, res) => {
 }));
 app.delete('/api/links/:id/request', h(async (req, res) => { await prisma.linkParticipation.deleteMany({ where: { userId: req.user!.id, linkId: pid(req) } }); res.json({ message: "Cancelado" }); }));
 app.get('/api/links/:id/participations', h(async (req, res) => res.json(await prisma.linkParticipation.findMany({ where: { linkId: pid(req) }, include: { user: { select: userPublic } }, orderBy: { createdAt: 'asc' } }))));
+
+// Líder convida um membro (fica CONVITE_PENDENTE até o convidado aceitar/recusar)
+app.post('/api/links/:id/invite', validate(inviteSchema), h(async (req, res) => {
+  const link = await prisma.link.findUnique({ where: { id: pid(req) } });
+  if (!link) return res.status(404).json({ error: 'Link não encontrado.' });
+  if (link.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'links'))) return res.status(403).json({ error: 'Apenas o líder do Link pode convidar membros.' });
+  try {
+    const part = await prisma.linkParticipation.create({ data: { userId: req.body.userId, linkId: link.id, status: 'CONVITE_PENDENTE' } });
+    notify(req.body.userId, 'INVITE', 'Convite para participar', `Você foi convidado para participar do Link "${link.name}".`, link.id, 'links');
+    res.status(201).json(part);
+  } catch { res.status(409).json({ error: 'Essa pessoa já participa ou já tem uma solicitação/convite pendente.' }); }
+}));
+app.post('/api/links/:id/invite/accept', h(async (req, res) => {
+  const m = await prisma.linkParticipation.findUnique({ where: { userId_linkId: { userId: req.user!.id, linkId: pid(req) } } });
+  if (!m || m.status !== 'CONVITE_PENDENTE') return res.status(404).json({ error: 'Convite não encontrado.' });
+  const [updated, me] = await Promise.all([
+    prisma.linkParticipation.update({ where: { id: m.id }, data: { status: 'APROVADO' }, include: { link: true } }),
+    prisma.user.findUnique({ where: { id: req.user!.id }, select: { name: true } }),
+  ]);
+  notify(updated.link.leaderId, 'INFO', 'Convite aceito', `${me?.name || 'Alguém'} aceitou o convite para o Link "${updated.link.name}".`, updated.link.id, 'links');
+  res.json({ message: 'Você entrou!' });
+}));
+app.post('/api/links/:id/invite/decline', h(async (req, res) => {
+  await prisma.linkParticipation.deleteMany({ where: { userId: req.user!.id, linkId: pid(req), status: 'CONVITE_PENDENTE' } });
+  res.json({ message: 'Convite recusado.' });
+}));
 app.patch('/api/links/participations/:id', validate(statusSchema), h(async (req, res) => {
   const part = await prisma.linkParticipation.findUnique({ where: { id: pid(req) }, include: { link: true } });
   if (!part) return res.status(404).json({ error: 'Participação não encontrada.' });
