@@ -8,47 +8,54 @@ datasource db {
 }
 
 model User {
-  id            String   @id @default(uuid())
-  name          String
-  email         String   @unique
-  password      String   @default("123")
-  role          String   @default("MEMBRO") // MEMBRO, VOLUNTARIO, AUXILIAR_LIDER, LIDER, ADMIN
-  campus        String   @default("Zion Ribeirão Preto")
-  points        Int      @default(0)
-  bibleStreak   Int      @default(0)
-  canRedeem     Boolean  @default(false) // liberação da liderança para resgatar prêmios na loja
-  welcomed      Boolean  @default(false) // já viu o pop-up de boas-vindas no primeiro acesso
-  profileImage  String?  // CAMPO NOVO: Foto de Perfil (Base64 ou URL)
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id             String   @id @default(uuid())
+  name           String
+  email          String   @unique
+  password       String   @default("123")
+  role           String   @default("MEMBRO") // MEMBRO, VOLUNTARIO, AUXILIAR_LIDER, LIDER, ADMIN
+  campus         String   @default("Zion Ribeirão Preto")
+  points         Int      @default(0)
+  bibleStreak    Int      @default(0)
+  canRedeem      Boolean  @default(false) // liberação da liderança para resgatar prêmios na loja
+  welcomed       Boolean  @default(false) // já viu o pop-up de boas-vindas no primeiro acesso
+  profileImage   String? // CAMPO NOVO: Foto de Perfil (Base64 ou URL)
+  // Acesso administrativo granular por módulo (independe do cargo — ex.: um Líder pode
+  // gerenciar a Loja sem virar Admin/Pastor). Concedido em Admin > Membros.
+  canManageLinks Boolean  @default(false)
+  canManageAreas Boolean  @default(false)
+  canManageStore Boolean  @default(false)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  linkParticipations LinkParticipation[]
-  areaParticipations AreaParticipation[]
-  shifts             Shift[]
-  messages           LinkMessage[]
-  publications       Publication[]
-  redemptions        Redemption[]
-  readingLogs        ReadingLog[]
-  pointAwards        PointAward[]
-  ownedGroups        ReadingGroup[] @relation("GroupOwner")
-  groupMemberships   GroupMember[]
-  notifications      Notification[]
-  groupMessages      GroupMessage[]
-  bugReports         BugReport[]
-  prayerRequests     PrayerRequest[]
-  areaMessages       AreaMessage[]
+  linkParticipations  LinkParticipation[]
+  areaParticipations  AreaParticipation[]
+  shifts              Shift[]
+  messages            LinkMessage[]
+  publications        Publication[]
+  redemptions         Redemption[]
+  readingLogs         ReadingLog[]
+  pointAwards         PointAward[]
+  ownedGroups         ReadingGroup[]       @relation("GroupOwner")
+  groupMemberships    GroupMember[]
+  notifications       Notification[]
+  groupMessages       GroupMessage[]
+  bugReports          BugReport[]
+  prayerRequests      PrayerRequest[]
+  areaMessages        AreaMessage[]
+  eventParticipations EventParticipation[]
+  availabilities      Availability[]
 
-  ledLinks           Link[] @relation("LinkLeader")
-  ledAreas           Area[] @relation("AreaLeader")
+  ledLinks Link[] @relation("LinkLeader")
+  ledAreas Area[] @relation("AreaLeader")
 }
 
 model Notification {
   id        String   @id @default(uuid())
-  type      String   // INFO, REQUEST, APPROVED, REJECTED, MILESTONE, REMINDER
+  type      String // INFO, REQUEST, APPROVED, REJECTED, MILESTONE, REMINDER
   title     String
   body      String?
-  refId     String?  // dedupe/deep-link (ex: reminder-182)
-  route     String?  // destino ao clicar (ex: "membros:reading", "voluntarios", "links", "membros:groups")
+  refId     String? // dedupe/deep-link (ex: reminder-182)
+  route     String? // destino ao clicar (ex: "membros:reading", "voluntarios", "links", "membros:groups")
   read      Boolean  @default(false)
   userId    String
   user      User     @relation(fields: [userId], references: [id])
@@ -60,8 +67,8 @@ model Notification {
 // Ledger de pontos: garante que cada ação credite pontos apenas uma vez
 model PointAward {
   id        String   @id @default(uuid())
-  ruleKey   String   // ex: EVENT_PARTICIPATION
-  refId     String   // id da ação (evento, escala, treinamento...)
+  ruleKey   String // ex: EVENT_PARTICIPATION
+  refId     String // id da ação (evento, escala, treinamento...)
   points    Int
   userId    String
   user      User     @relation(fields: [userId], references: [id])
@@ -78,15 +85,15 @@ model ReadingGroup {
   owner       User     @relation("GroupOwner", fields: [ownerId], references: [id])
   createdAt   DateTime @default(now())
 
-  members     GroupMember[]
-  messages    GroupMessage[]
+  members  GroupMember[]
+  messages GroupMessage[]
 }
 
 model GroupMessage {
   id        String       @id @default(uuid())
   type      String       @default("COMMENT") // READING (atividade automática), COMMENT
-  content   String       // texto do comentário OU referência da leitura
-  imageUrl  String?      // foto da leitura (quando type READING com foto)
+  content   String // texto do comentário OU referência da leitura
+  imageUrl  String? // foto da leitura (quando type READING com foto)
   groupId   String
   group     ReadingGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
   userId    String
@@ -101,7 +108,7 @@ model GroupMessage {
 model MessageReaction {
   id        String       @id @default(uuid())
   emoji     String
-  userId    String       // sem relação de volta em User (apenas referência)
+  userId    String // sem relação de volta em User (apenas referência)
   messageId String
   message   GroupMessage @relation(fields: [messageId], references: [id], onDelete: Cascade)
   createdAt DateTime     @default(now())
@@ -123,9 +130,9 @@ model GroupMember {
 
 model ReadingLog {
   id        String   @id @default(uuid())
-  day       Int      // dia do plano (1..365)
-  reference String   // leitura do dia, ex: "Gênesis 1-3"
-  photoUrl  String   // foto de comprovação (Base64)
+  day       Int // dia do plano (1..365)
+  reference String // leitura do dia, ex: "Gênesis 1-3"
+  photoUrl  String // foto de comprovação (Base64)
   userId    String
   user      User     @relation(fields: [userId], references: [id])
   createdAt DateTime @default(now())
@@ -136,8 +143,8 @@ model ReadingLog {
 // Permissões por cargo (matriz configurável no Admin > Cargos)
 model RolePermission {
   id      String  @id @default(uuid())
-  role    String  // MEMBRO, VOLUNTARIO, AUXILIAR, LIDER, ADMIN
-  permKey String  // ex: STORE_REDEEM, VOUCHER_VALIDATE
+  role    String // MEMBRO, VOLUNTARIO, AUXILIAR, LIDER, ADMIN
+  permKey String // ex: STORE_REDEEM, VOUCHER_VALIDATE
   allowed Boolean @default(false)
 
   @@unique([role, permKey])
@@ -180,8 +187,8 @@ model Product {
   name        String
   category    String   @default("Geral")
   description String?
-  cost        Int      // Zion Points necessários para resgatar
-  imageUrl    String?  // foto (Base64 ou URL)
+  cost        Int // Zion Points necessários para resgatar
+  imageUrl    String? // foto (Base64 ou URL)
   active      Boolean  @default(true)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -194,7 +201,7 @@ model Redemption {
   code        String    @unique
   cost        Int
   status      String    @default("ATIVO") // ATIVO, USADO
-  productName String    // snapshot do nome no momento do resgate
+  productName String // snapshot do nome no momento do resgate
   userId      String
   user        User      @relation(fields: [userId], references: [id])
   productId   String?
@@ -236,7 +243,7 @@ model LinkMessage {
   content     String
   category    String   @default("RESUMO")
   isPinned    Boolean  @default(false)
-  pollOptions String?  // JSON de opções quando é enquete (ex: ["Sim","Não"])
+  pollOptions String? // JSON de opções quando é enquete (ex: ["Sim","Não"])
   authorId    String
   author      User     @relation(fields: [authorId], references: [id])
   linkId      String
@@ -244,8 +251,8 @@ model LinkMessage {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  reactions   LinkMessageReaction[]
-  votes       PollVote[]
+  reactions LinkMessageReaction[]
+  votes     PollVote[]
 }
 
 model LinkMessageReaction {
@@ -293,13 +300,31 @@ model Event {
   checkinCode String   @default("") // código para check-in via QR
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
+
+  participations EventParticipation[]
+}
+
+// Confirmação de presença (RSVP) e check-in real, separados — permite ao admin contar os dois.
+model EventParticipation {
+  id          String    @id @default(uuid())
+  userId      String
+  user        User      @relation(fields: [userId], references: [id])
+  eventId     String
+  event       Event     @relation(fields: [eventId], references: [id], onDelete: Cascade)
+  refId       String // evento ou ocorrência (eventId ou eventId@isoDate) — chave de idempotência
+  rsvpAt      DateTime  @default(now())
+  checkedInAt DateTime?
+  createdAt   DateTime  @default(now())
+
+  @@unique([userId, refId])
+  @@index([eventId])
 }
 
 model Announcement {
   id        String   @id @default(uuid())
   title     String
   content   String
-  type      String   @default("GERAL") 
+  type      String   @default("GERAL")
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -308,6 +333,7 @@ model Area {
   id          String   @id @default(uuid())
   name        String
   description String?
+  icon        String   @default("Briefcase") // nome do ícone lucide-react (catálogo fixo no frontend)
   leaderId    String
   leader      User     @relation("AreaLeader", fields: [leaderId], references: [id])
   createdAt   DateTime @default(now())
@@ -316,6 +342,36 @@ model Area {
   participations AreaParticipation[]
   shifts         Shift[]
   messages       AreaMessage[]
+  positions      AreaPosition[]
+  availabilities Availability[]
+}
+
+// Posições dentro de uma área (ex.: Keola Coffee -> Balcão, Forno, Barista). Só o líder cria.
+model AreaPosition {
+  id        String   @id @default(uuid())
+  name      String
+  order     Int      @default(0)
+  areaId    String
+  area      Area     @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+
+  shifts Shift[]
+
+  @@unique([areaId, name])
+}
+
+// Disponibilidade semanal do voluntário para uma área (dia da semana + período).
+model Availability {
+  id        String   @id @default(uuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  areaId    String
+  area      Area     @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  weekday   Int // 0=domingo ... 6=sábado
+  period    String // MANHA, TARDE, NOITE
+  createdAt DateTime @default(now())
+
+  @@unique([userId, areaId, weekday, period])
 }
 
 model AreaMessage {
@@ -323,7 +379,7 @@ model AreaMessage {
   content     String
   category    String   @default("AVISO")
   isPinned    Boolean  @default(false)
-  pollOptions String?  // JSON de opções quando é enquete
+  pollOptions String? // JSON de opções quando é enquete
   authorId    String
   author      User     @relation(fields: [authorId], references: [id])
   areaId      String
@@ -331,8 +387,8 @@ model AreaMessage {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  reactions   AreaMessageReaction[]
-  votes       AreaPollVote[]
+  reactions AreaMessageReaction[]
+  votes     AreaPollVote[]
 }
 
 model AreaMessageReaction {
@@ -372,15 +428,17 @@ model AreaParticipation {
 }
 
 model Shift {
-  id          String   @id @default(uuid())
-  department  String
+  id         String @id @default(uuid())
+  department String
 
   date        DateTime
-  status      String   @default("Pendente")
+  status      String        @default("Pendente")
   volunteerId String?
-  user        User?    @relation(fields: [volunteerId], references: [id])
+  user        User?         @relation(fields: [volunteerId], references: [id])
   areaId      String?
-  area        Area?    @relation(fields: [areaId], references: [id])
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  area        Area?         @relation(fields: [areaId], references: [id])
+  positionId  String?
+  position    AreaPosition? @relation(fields: [positionId], references: [id])
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
 }

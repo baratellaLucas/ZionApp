@@ -217,6 +217,24 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
     }
   };
 
+  // Acesso administrativo por módulo (Links, Áreas ou Loja) sem precisar do cargo Admin/Pastor
+  const MODULE_FLAG_FIELD = { links: 'canManageLinks', areas: 'canManageAreas', store: 'canManageStore' };
+  const handleModuleAccessToggle = async (userId, moduleKey, value) => {
+    const field = MODULE_FLAG_FIELD[moduleKey];
+    try {
+      const res = await apiFetch(`/api/users/${userId}/module-access`, {
+        method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ module: moduleKey, value })
+      });
+      if (res.ok) {
+        setAllUsers(allUsers.map(u => u.id === userId ? { ...u, [field]: value } : u));
+        showNotification(value ? 'Acesso administrativo concedido!' : 'Acesso administrativo removido.');
+      }
+    } catch (e) {
+      setAllUsers(allUsers.map(u => u.id === userId ? { ...u, [field]: value } : u));
+      showNotification('Ação registrada (Offline).');
+    }
+  };
+
   const handleSaveLink = async (e) => {
     e.preventDefault();
     const method = editingLinkId ? 'PUT' : 'POST';
@@ -997,6 +1015,25 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                        >
                          <QrCode className="w-3.5 h-3.5"/> {usr.canRedeem ? 'Atendente ✓' : 'Atendente'}
                        </button>
+                       {LOCKED_ROLE(user.role) && (
+                       <div className="flex items-center gap-1 bg-surface-dark border border-white/10 rounded-md p-1" title="Acesso administrativo por módulo">
+                         <button
+                           onClick={() => handleModuleAccessToggle(usr.id, 'links', !usr.canManageLinks)}
+                           title={usr.canManageLinks ? 'Gerencia Links — clique para remover' : 'Não gerencia Links — clique para conceder'}
+                           className={`p-1.5 rounded transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${usr.canManageLinks ? 'text-brand-primary bg-brand-primary/10' : 'text-text-muted hover:text-white'}`}
+                         ><LinkIcon className="w-3.5 h-3.5"/></button>
+                         <button
+                           onClick={() => handleModuleAccessToggle(usr.id, 'areas', !usr.canManageAreas)}
+                           title={usr.canManageAreas ? 'Gerencia Voluntários — clique para remover' : 'Não gerencia Voluntários — clique para conceder'}
+                           className={`p-1.5 rounded transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${usr.canManageAreas ? 'text-brand-primary bg-brand-primary/10' : 'text-text-muted hover:text-white'}`}
+                         ><Briefcase className="w-3.5 h-3.5"/></button>
+                         <button
+                           onClick={() => handleModuleAccessToggle(usr.id, 'store', !usr.canManageStore)}
+                           title={usr.canManageStore ? 'Gerencia Loja — clique para remover' : 'Não gerencia Loja — clique para conceder'}
+                           className={`p-1.5 rounded transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${usr.canManageStore ? 'text-brand-primary bg-brand-primary/10' : 'text-text-muted hover:text-white'}`}
+                         ><Gift className="w-3.5 h-3.5"/></button>
+                       </div>
+                       )}
                        {user.role === 'ADMIN' && (
                        <button
                          onClick={() => handleSimulateUser?.(usr)}

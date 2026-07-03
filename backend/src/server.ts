@@ -34,6 +34,7 @@ const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeade
 const userPublic = {
   id: true, name: true, email: true, role: true, campus: true,
   points: true, bibleStreak: true, profileImage: true, canRedeem: true, welcomed: true, createdAt: true, updatedAt: true,
+  canManageLinks: true, canManageAreas: true, canManageStore: true,
 } as const;
 
 // Hierarquia de cargos (ordem de liderança). Usada p/ liberar recursos por nível.
@@ -71,6 +72,22 @@ const canValidateVoucher = (req: Request, res: Response, next: NextFunction) => 
   if (isStaff(req)) return next();
   prisma.user.findUnique({ where: { id: req.user!.id }, select: { canRedeem: true } })
     .then(u => u?.canRedeem ? next() : res.status(403).json({ error: 'Você não tem permissão para validar vouchers. Peça à liderança para liberar seu acesso de atendente.' }))
+    .catch(next);
+};
+
+// Acesso administrativo granular por módulo (Admin > Membros): permite gerenciar um módulo
+// específico (Links, Áreas ou Loja) sem precisar do cargo Admin/Pastor. Staff sempre passa.
+const MODULE_FLAG = { links: 'canManageLinks', areas: 'canManageAreas', store: 'canManageStore' } as const;
+type ManageModule = keyof typeof MODULE_FLAG;
+const hasModuleAccess = async (req: Request, moduleKey: ManageModule): Promise<boolean> => {
+  if (isStaff(req)) return true;
+  const field = MODULE_FLAG[moduleKey];
+  const u = await prisma.user.findUnique({ where: { id: req.user!.id }, select: { [field]: true } }) as Record<string, boolean> | null;
+  return !!u?.[field];
+};
+const canManage = (moduleKey: ManageModule) => (req: Request, res: Response, next: NextFunction) => {
+  hasModuleAccess(req, moduleKey)
+    .then(ok => ok ? next() : res.status(403).json({ error: 'Você não tem acesso administrativo a este módulo.' }))
     .catch(next);
 };
 
@@ -393,6 +410,13 @@ app.patch('/api/users/:id/role', staffOnly, validate(roleSchema), h(async (req, 
 // Liberar/bloquear resgate de prêmios para um usuário (admin)
 app.patch('/api/users/:id/redeem-flag', staffOnly,validate(redeemFlagSchema), h(async (req, res) =>
   res.json(await prisma.user.update({ where: { id: pid(req) }, data: { canRedeem: req.body.canRedeem }, select: userPublic }))));
+// Conceder/revogar acesso administrativo a um módulo específico (Links, Áreas ou Loja) sem
+// precisar do cargo Admin/Pastor. Só staff (Admin/Pastor) concede.
+const moduleAccessSchema = z.object({ module: z.enum(['links', 'areas', 'store']), value: z.boolean() });
+app.patch('/api/users/:id/module-access', staffOnly, validate(moduleAccessSchema), h(async (req, res) => {
+  const field = MODULE_FLAG[req.body.module as ManageModule];
+  res.json(await prisma.user.update({ where: { id: pid(req) }, data: { [field]: req.body.value }, select: userPublic }));
+}));
 // Marca que o usuário já viu o pop-up de boas-vindas
 app.post('/api/users/me/welcome', h(async (req, res) =>
   res.json(await prisma.user.update({ where: { id: req.user!.id }, data: { welcomed: true }, select: userPublic }))));
@@ -542,10 +566,10 @@ app.get('/api/areas', h(async (req, res) => {
   const areas = await prisma.area.findMany({ include: { leader: { select: userPublic }, participations: { where: { status: 'APROVADO' } } } });
   res.json(areas.map(a => ({ ...a, approvedCount: a.participations.length, participations: undefined })));
 }));
-app.post('/api/areas', staffOnly,validate(areaSchema), h(async (req, res) => res.status(201).json(await prisma.area.create({ data: req.body, include: { leader: { select: userPublic } } }))));
-app.put('/api/areas/:id', staffOnly,validate(areaSchema), h(async (req, res) => res.json(await prisma.area.update({ where: { id: pid(req) }, data: req.body, include: { leader: { select: userPublic } } }))));
-app.delete('/api/areas/:id', staffOnly,h(async (req, res) => { await prisma.area.delete({ where: { id: pid(req) } }); res.json({ message: "Removido" }); }));
-app.patch('/api/areas/:id/leader', staffOnly,validate(leaderPatchSchema), h(async (req, res) => res.json(await prisma.area.update({ where: { id: pid(req) }, data: { leaderId: req.body.leaderId } }))));
+app.post('/api/areas', canManage('areas'),validate(areaSchema), h(async (req, res) => res.status(201).json(await prisma.area.create({ data: req.body, include: { leader: { select: userPublic } } }))));
+app.put('/api/areas/:id', canManage('areas'),validate(areaSchema), h(async (req, res) => res.json(await prisma.area.update({ where: { id: pid(req) }, data: req.body, include: { leader: { select: userPublic } } }))));
+app.delete('/api/areas/:id', canManage('areas'),h(async (req, res) => { await prisma.area.delete({ where: { id: pid(req) } }); res.json({ message: "Removido" }); }));
+app.patch('/api/areas/:id/leader', canManage('areas'),validate(leaderPatchSchema), h(async (req, res) => res.json(await prisma.area.update({ where: { id: pid(req) }, data: { leaderId: req.body.leaderId } }))));
 
 // Participações e Escalas (userId vem do token)
 app.get('/api/areas/my-participations', h(async (req, res) => res.json(await prisma.areaParticipation.findMany({ where: { userId: req.user!.id }, include: { area: { include: { leader: { select: userPublic } } } } }))));
@@ -565,7 +589,7 @@ app.get('/api/areas/:id/participations', h(async (req, res) => res.json(await pr
 app.patch('/api/areas/participations/:id', validate(statusSchema), h(async (req, res) => {
   const part = await prisma.areaParticipation.findUnique({ where: { id: pid(req) }, include: { area: true } });
   if (!part) return res.status(404).json({ error: 'Participação não encontrada.' });
-  if (part.area.leaderId !== req.user!.id && !isStaff(req)) return res.status(403).json({ error: 'Apenas o líder da área pode aprovar/recusar.' });
+  if (part.area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode aprovar/recusar.' });
   const updated = await prisma.areaParticipation.update({ where: { id: pid(req) }, data: { status: req.body.status }, include: { user: { select: userPublic } } });
   const aprovado = req.body.status === 'APROVADO';
   notify(part.userId, aprovado ? 'APPROVED' : 'REJECTED', aprovado ? 'Voluntariado aprovado!' : 'Solicitação recusada', `Sua entrada na área "${part.area.name}" foi ${aprovado ? 'aprovada' : 'recusada'}.`, part.area.id, 'voluntarios');
@@ -576,7 +600,7 @@ app.patch('/api/areas/participations/:id', validate(statusSchema), h(async (req,
 app.post('/api/areas/:id/shifts', validate(shiftSchema), h(async (req, res) => {
   const area = await prisma.area.findUnique({ where: { id: pid(req) } });
   if (!area) return res.status(404).json({ error: 'Área não encontrada.' });
-  if (area.leaderId !== req.user!.id && !isStaff(req)) return res.status(403).json({ error: 'Apenas o líder da área pode criar escalas.' });
+  if (area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode criar escalas.' });
   const when = new Date(req.body.date);
   if (isNaN(when.getTime())) return res.status(400).json({ error: 'Data inválida.' });
   const shift = await prisma.shift.create({ data: { areaId: area.id, department: area.name, date: when, volunteerId: req.body.volunteerId || null, status: 'Pendente' }, include: { user: { select: userPublic } } });
@@ -591,7 +615,7 @@ app.get('/api/areas/:id/shifts', h(async (req, res) => res.json(await prisma.shi
 app.delete('/api/shifts/:id', h(async (req, res) => {
   const shift = await prisma.shift.findUnique({ where: { id: pid(req) }, include: { area: true } });
   if (!shift) return res.status(404).json({ error: 'Escala não encontrada.' });
-  if (shift.area && shift.area.leaderId !== req.user!.id && !isStaff(req)) return res.status(403).json({ error: 'Sem permissão.' });
+  if (shift.area && shift.area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Sem permissão.' });
   await prisma.shift.delete({ where: { id: pid(req) } });
   res.json({ message: 'Removido' });
 }));
@@ -637,14 +661,14 @@ app.post('/api/areas/:id/messages', validate(messageSchema), h(async (req, res) 
 app.delete('/api/areas/messages/:id', h(async (req, res) => {
   const msg = await prisma.areaMessage.findUnique({ where: { id: pid(req) }, include: { area: true } });
   if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada' });
-  if (msg.authorId !== req.user!.id && msg.area.leaderId !== req.user!.id && !isStaff(req)) return res.status(403).json({ error: FORBIDDEN });
+  if (msg.authorId !== req.user!.id && msg.area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: FORBIDDEN });
   await prisma.areaMessage.delete({ where: { id: pid(req) } });
   res.json({ message: "Deletado" });
 }));
 app.patch('/api/areas/messages/:id/pin', h(async (req, res) => {
   const msg = await prisma.areaMessage.findUnique({ where: { id: pid(req) }, include: { area: true } });
   if (!msg) return res.status(404).json({ error: "Mensagem não encontrada" });
-  if (msg.area.leaderId !== req.user!.id && !isStaff(req)) return res.status(403).json({ error: 'Apenas o líder pode fixar mensagens.' });
+  if (msg.area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder pode fixar mensagens.' });
   res.json(await prisma.areaMessage.update({ where: { id: pid(req) }, data: { isPinned: !msg.isPinned }, include: { author: { select: userPublic } } }));
 }));
 app.post('/api/areas/messages/:id/react', validate(reactSchema), h(async (req, res) => {
@@ -670,14 +694,14 @@ app.get('/api/links', h(async (req, res) => {
   const links = await prisma.link.findMany({ include: { leader: { select: userPublic }, participations: { where: { status: 'APROVADO' } } } });
   res.json(links.map(l => ({ ...l, approvedCount: l.participations.length, participations: undefined })));
 }));
-app.post('/api/links', staffOnly,validate(linkSchema), h(async (req, res) => res.status(201).json(await prisma.link.create({ data: req.body, include: { leader: { select: userPublic } } }))));
+app.post('/api/links', canManage('links'),validate(linkSchema), h(async (req, res) => res.status(201).json(await prisma.link.create({ data: req.body, include: { leader: { select: userPublic } } }))));
 app.put('/api/links/:id', validate(linkSchema), h(async (req, res) => {
   const link = await prisma.link.findUnique({ where: { id: pid(req) } });
   if (!link) return res.status(404).json({ error: 'Link não encontrado.' });
-  if (link.leaderId !== req.user!.id && !isStaff(req)) return res.status(403).json({ error: 'Apenas o líder pode editar este Link.' });
+  if (link.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'links'))) return res.status(403).json({ error: 'Apenas o líder pode editar este Link.' });
   res.json(await prisma.link.update({ where: { id: pid(req) }, data: req.body, include: { leader: { select: userPublic } } }));
 }));
-app.delete('/api/links/:id', staffOnly,h(async (req, res) => { await prisma.link.delete({ where: { id: pid(req) } }); res.json({ message: "Removido" }); }));
+app.delete('/api/links/:id', canManage('links'),h(async (req, res) => { await prisma.link.delete({ where: { id: pid(req) } }); res.json({ message: "Removido" }); }));
 app.get('/api/links/my-participations', h(async (req, res) => res.json(await prisma.linkParticipation.findMany({ where: { userId: req.user!.id }, include: { link: { include: { leader: { select: userPublic } } } } }))));
 app.post('/api/links/:id/request', h(async (req, res) => {
   try {
@@ -695,7 +719,7 @@ app.get('/api/links/:id/participations', h(async (req, res) => res.json(await pr
 app.patch('/api/links/participations/:id', validate(statusSchema), h(async (req, res) => {
   const part = await prisma.linkParticipation.findUnique({ where: { id: pid(req) }, include: { link: true } });
   if (!part) return res.status(404).json({ error: 'Participação não encontrada.' });
-  if (part.link.leaderId !== req.user!.id && !isStaff(req)) return res.status(403).json({ error: 'Apenas o líder do Link pode aprovar/recusar.' });
+  if (part.link.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'links'))) return res.status(403).json({ error: 'Apenas o líder do Link pode aprovar/recusar.' });
   const updated = await prisma.linkParticipation.update({ where: { id: pid(req) }, data: { status: req.body.status }, include: { user: { select: userPublic } } });
   const aprovado = req.body.status === 'APROVADO';
   notify(part.userId, aprovado ? 'APPROVED' : 'REJECTED', aprovado ? 'Entrada aprovada!' : 'Solicitação recusada', `Sua entrada no Link "${part.link.name}" foi ${aprovado ? 'aprovada' : 'recusada'}.`, part.link.id, 'links');
@@ -731,14 +755,14 @@ app.post('/api/links/:id/messages', validate(messageSchema), h(async (req, res) 
 app.delete('/api/links/messages/:id', h(async (req, res) => {
   const msg = await prisma.linkMessage.findUnique({ where: { id: pid(req) }, include: { link: true } });
   if (!msg) return res.status(404).json({ error: 'Mensagem não encontrada' });
-  if (msg.authorId !== req.user!.id && msg.link.leaderId !== req.user!.id && !isStaff(req)) return res.status(403).json({ error: FORBIDDEN });
+  if (msg.authorId !== req.user!.id && msg.link.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'links'))) return res.status(403).json({ error: FORBIDDEN });
   await prisma.linkMessage.delete({ where: { id: pid(req) } });
   res.json({ message: "Deletado" });
 }));
 app.patch('/api/links/messages/:id/pin', h(async (req, res) => {
   const msg = await prisma.linkMessage.findUnique({ where: { id: pid(req) }, include: { link: true } });
   if (!msg) return res.status(404).json({ error: "Mensagem não encontrada" });
-  if (msg.link.leaderId !== req.user!.id && !isStaff(req)) return res.status(403).json({ error: 'Apenas o líder pode fixar mensagens.' });
+  if (msg.link.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'links'))) return res.status(403).json({ error: 'Apenas o líder pode fixar mensagens.' });
   res.json(await prisma.linkMessage.update({ where: { id: pid(req) }, data: { isPinned: !msg.isPinned }, include: { author: { select: userPublic } } }));
 }));
 // Reagir (toggle) a uma mensagem do mural com emoji
@@ -763,9 +787,9 @@ app.post('/api/links/messages/:id/vote', validate(voteSchema), h(async (req, res
 
 // --- LOJA DE RECOMPENSAS ---
 app.get('/api/products', h(async (req, res) => res.json(await prisma.product.findMany({ orderBy: { createdAt: 'desc' } }))));
-app.post('/api/products', staffOnly,validate(productSchema), h(async (req, res) => res.status(201).json(await prisma.product.create({ data: req.body }))));
-app.put('/api/products/:id', staffOnly,validate(productSchema), h(async (req, res) => res.json(await prisma.product.update({ where: { id: pid(req) }, data: req.body }))));
-app.delete('/api/products/:id', staffOnly,h(async (req, res) => { await prisma.product.delete({ where: { id: pid(req) } }); res.json({ message: "Removido" }); }));
+app.post('/api/products', canManage('store'),validate(productSchema), h(async (req, res) => res.status(201).json(await prisma.product.create({ data: req.body }))));
+app.put('/api/products/:id', canManage('store'),validate(productSchema), h(async (req, res) => res.json(await prisma.product.update({ where: { id: pid(req) }, data: req.body }))));
+app.delete('/api/products/:id', canManage('store'),h(async (req, res) => { await prisma.product.delete({ where: { id: pid(req) } }); res.json({ message: "Removido" }); }));
 
 // Resgatar: debita pontos e gera voucher único (transação)
 app.post('/api/products/:id/redeem', h(async (req, res) => {

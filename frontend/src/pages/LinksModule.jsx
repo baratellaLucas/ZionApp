@@ -14,6 +14,10 @@ export const TIMELINE_CATEGORIES = [
   { id: 'OBSERVACAO', label: 'Observação', icon: Lightbulb, color: 'text-emerald-400', bg: 'bg-emerald-500/10', border: 'border-emerald-500/20' }
 ];
 
+// Admin/Pastor ou quem recebeu acesso administrativo de Links (Admin > Membros) vê/gerencia
+// qualquer Link sem precisar participar dele.
+const isLinkStaff = (u) => u?.role === 'ADMIN' || u?.role === 'PASTOR' || !!u?.canManageLinks;
+
 const LinksModule = ({ user, showNotification }) => {
   const [links, setLinks] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -467,10 +471,18 @@ const LinksModule = ({ user, showNotification }) => {
                     {isPending ? (
                       <div className="flex items-center gap-1 mt-auto">
                         <span className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md text-[10px] font-semibold bg-surface-dark border border-amber-500/30 text-amber-400"><Clock className="w-3 h-3 shrink-0"/> Pendente</span>
+                        {isLinkStaff(user) && (
+                          <button onClick={() => openModal(link, 'info')} title="Ver detalhes (acesso administrativo)" className="shrink-0 p-1.5 rounded-md text-text-muted hover:text-brand-primary hover:bg-brand-primary/10 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Eye className="w-3.5 h-3.5"/></button>
+                        )}
                         <button onClick={() => requestCancelParticipation(link)} title="Cancelar solicitação" className="shrink-0 p-1.5 rounded-md text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-3.5 h-3.5"/></button>
                       </div>
                     ) : (
-                      <button onClick={() => handleRequestParticipation(link)} disabled={disableRequest} className={`w-full mt-auto py-1.5 rounded-md text-[11px] font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${disableRequest ? 'bg-surface-dark border border-white/5 text-text-muted/50 cursor-not-allowed' : 'bg-surface-dark border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-white'}`}>Solicitar</button>
+                      <div className="flex items-center gap-1 mt-auto">
+                        {isLinkStaff(user) && (
+                          <button onClick={() => openModal(link, 'info')} title="Ver detalhes (acesso administrativo)" className="shrink-0 p-1.5 rounded-md border border-white/10 text-text-muted hover:text-brand-primary hover:bg-brand-primary/10 hover:border-brand-primary/30 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Eye className="w-3.5 h-3.5"/></button>
+                        )}
+                        <button onClick={() => handleRequestParticipation(link)} disabled={disableRequest} className={`flex-1 py-1.5 rounded-md text-[11px] font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${disableRequest ? 'bg-surface-dark border border-white/5 text-text-muted/50 cursor-not-allowed' : 'bg-surface-dark border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-white'}`}>Solicitar</button>
+                      </div>
                     )}
                   </div>
                 );
@@ -583,7 +595,7 @@ const LinksModule = ({ user, showNotification }) => {
                           <div className="mb-6 relative">
                             <div className="flex items-center gap-2 mb-4 text-amber-400"><Pin className="w-4 h-4" /><h3 className="text-[10px] font-bold uppercase tracking-wider">Fixadas pelo Líder</h3></div>
                             {linkMessages.filter(m => m.isPinned).map(msg => {
-                              const isLeader = selectedLink.leaderId === user?.id; const isAuthor = msg.authorId === user?.id;
+                              const isLeader = selectedLink.leaderId === user?.id || isLinkStaff(user); const isAuthor = msg.authorId === user?.id;
                               const catInfo = TIMELINE_CATEGORIES.find(c => c.id === msg.category) || TIMELINE_CATEGORIES[3]; const Icon = catInfo.icon;
                               return (
                                 <div key={msg.id} className="relative pl-8 pb-4 group mb-2">
@@ -607,7 +619,7 @@ const LinksModule = ({ user, showNotification }) => {
                           </div>
                         )}
                         {linkMessages.filter(m => !m.isPinned).map((msg, index, arr) => {
-                          const isLeader = selectedLink.leaderId === user?.id; const isAuthor = msg.authorId === user?.id;
+                          const isLeader = selectedLink.leaderId === user?.id || isLinkStaff(user); const isAuthor = msg.authorId === user?.id;
                           const catInfo = TIMELINE_CATEGORIES.find(c => c.id === msg.category) || TIMELINE_CATEGORIES[3]; const Icon = catInfo.icon; const isLast = index === arr.length - 1;
                           return (
                             <div key={msg.id} className="relative pl-8 pb-8 group">

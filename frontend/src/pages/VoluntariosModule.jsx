@@ -5,7 +5,7 @@ import {
   CalendarDays, Coffee, Smile, Music, Megaphone, Briefcase, Clock,
   CheckCircle, GraduationCap, Users, MessageSquare, ShieldCheck,
   Award, Gift, X, Save, BookOpen, Trash2, AlertTriangle, Heart,
-  Send, Pin, BarChart3, Plus, Loader2
+  Send, Pin, BarChart3, Plus, Loader2, Eye
 } from 'lucide-react';
 
 // Categorias e emojis do mural da área (mesma lógica do mural de Links)
@@ -34,6 +34,10 @@ const AREA_STYLES = [
 const DEFAULT_AREA_STYLE = { Icon: Briefcase, color: 'text-brand-primary', bg: 'bg-brand-primary/10' };
 
 const MAX_AREAS_PER_PERSON = 2;
+
+// Admin/Pastor ou quem recebeu acesso administrativo de Voluntários (Admin > Membros) vê/gerencia
+// qualquer área sem precisar participar dela.
+const isAreaStaff = (u) => u?.role === 'ADMIN' || u?.role === 'PASTOR' || !!u?.canManageAreas;
 
 const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHandled }) => {
   const [activeTab,        setActiveTab]        = useState('minhas_areas');
@@ -461,6 +465,9 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                       <span className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md text-[10px] font-semibold bg-surface-dark border border-white/5 text-text-muted/70 text-center">
                         <CheckCircle className="w-3 h-3 shrink-0"/> {myParticipation.status === 'APROVADO' ? 'Participando' : 'Pendente'}
                       </span>
+                      {isAreaStaff(user) && (
+                        <button onClick={() => openAreaModal(area.id)} title="Ver detalhes (acesso administrativo)" className="shrink-0 p-1.5 rounded-md text-text-muted hover:text-brand-primary hover:bg-brand-primary/10 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Eye className="w-3.5 h-3.5"/></button>
+                      )}
                       <button
                         onClick={() => requestCancelArea(myParticipation)}
                         title="Cancelar solicitação"
@@ -470,14 +477,19 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                       </button>
                     </div>
                   ) : (
-                    <button
-                      onClick={() => handleRequestArea(area.id)}
-                      disabled={disableRequest}
-                      title={disableRequest ? `Limite de ${MAX_AREAS_PER_PERSON} áreas atingido` : undefined}
-                      className="w-full mt-auto py-1.5 rounded-md text-[11px] font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 bg-surface-dark border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Solicitar
-                    </button>
+                    <div className="flex items-center gap-1 mt-auto pt-1">
+                      {isAreaStaff(user) && (
+                        <button onClick={() => openAreaModal(area.id)} title="Ver detalhes (acesso administrativo)" className="shrink-0 p-1.5 rounded-md border border-white/10 text-text-muted hover:text-brand-primary hover:bg-brand-primary/10 hover:border-brand-primary/30 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Eye className="w-3.5 h-3.5"/></button>
+                      )}
+                      <button
+                        onClick={() => handleRequestArea(area.id)}
+                        disabled={disableRequest}
+                        title={disableRequest ? `Limite de ${MAX_AREAS_PER_PERSON} áreas atingido` : undefined}
+                        className="flex-1 py-1.5 rounded-md text-[11px] font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 bg-surface-dark border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        Solicitar
+                      </button>
+                    </div>
                   )}
                 </div>
               );
@@ -843,7 +855,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
 
               {/* TAB: MURAL */}
               {modalTab === 'mural' && (() => {
-                const isLeader = activeAreaDetails.leaderId === user?.id || user?.role === 'ADMIN';
+                const isLeader = activeAreaDetails.leaderId === user?.id || isAreaStaff(user);
                 const pinned = muralMsgs.filter(m => m.isPinned);
                 const normal = muralMsgs.filter(m => !m.isPinned);
                 const catInfo = (c) => AREA_MURAL_CATS.find(x => x.id === c) || AREA_MURAL_CATS[3];
