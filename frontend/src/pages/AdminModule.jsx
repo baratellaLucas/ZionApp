@@ -518,26 +518,39 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                       </tr>
                     </thead>
                     <tbody>
-                      {permData.permissions.map(p => (
-                        <tr key={p.key} className="border-b border-white/5 hover:bg-white/[0.02]">
-                          <td className="px-4 py-3">
-                            <div className="font-semibold text-text-primary">{p.label}</div>
-                            <div className="text-xs text-text-muted mt-0.5">{p.description}</div>
-                          </td>
-                          {permData.roles.map(role => (
-                            <td key={role} className="px-3 py-3 text-center">
-                              <button
-                                onClick={() => !LOCKED_ROLE(role) && togglePerm(p.key, role)}
-                                disabled={LOCKED_ROLE(role)}
-                                aria-label={`${p.label} — ${ROLE_LABEL[role] || role}`}
-                                title={LOCKED_ROLE(role) ? `${ROLE_LABEL[role]} sempre tem acesso total` : (p.matrix[role] ? 'Permitido — clique para bloquear' : 'Bloqueado — clique para permitir')}
-                                className={`inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${p.matrix[role] ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400' : 'bg-surface-dark border-white/10 text-white/20'} ${LOCKED_ROLE(role) ? 'opacity-60 cursor-not-allowed' : 'hover:border-white/30'}`}
-                              >
-                                {p.matrix[role] ? <CheckCircle className="w-4 h-4"/> : <X className="w-4 h-4"/>}
-                              </button>
-                            </td>
+                      {Object.entries(
+                        permData.permissions.reduce((acc, p) => {
+                          const cat = p.category || 'Geral';
+                          (acc[cat] = acc[cat] || []).push(p);
+                          return acc;
+                        }, {})
+                      ).map(([category, perms]) => (
+                        <React.Fragment key={category}>
+                          <tr className="bg-surface-dark/60">
+                            <td colSpan={permData.roles.length + 1} className="px-4 py-1.5 text-[10px] font-bold uppercase tracking-widest text-brand-primary">{category}</td>
+                          </tr>
+                          {perms.map(p => (
+                            <tr key={p.key} className="border-b border-white/5 hover:bg-white/[0.02]">
+                              <td className="px-4 py-3">
+                                <div className="font-semibold text-text-primary">{p.label}</div>
+                                <div className="text-xs text-text-muted mt-0.5">{p.description}</div>
+                              </td>
+                              {permData.roles.map(role => (
+                                <td key={role} className="px-3 py-3 text-center">
+                                  <button
+                                    onClick={() => !LOCKED_ROLE(role) && togglePerm(p.key, role)}
+                                    disabled={LOCKED_ROLE(role)}
+                                    aria-label={`${p.label} — ${ROLE_LABEL[role] || role}`}
+                                    title={LOCKED_ROLE(role) ? `${ROLE_LABEL[role]} sempre tem acesso total` : (p.matrix[role] ? 'Permitido — clique para bloquear' : 'Bloqueado — clique para permitir')}
+                                    className={`inline-flex items-center justify-center w-7 h-7 rounded-md border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${p.matrix[role] ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400' : 'bg-surface-dark border-white/10 text-white/20'} ${LOCKED_ROLE(role) ? 'opacity-60 cursor-not-allowed' : 'hover:border-white/30'}`}
+                                  >
+                                    {p.matrix[role] ? <CheckCircle className="w-4 h-4"/> : <X className="w-4 h-4"/>}
+                                  </button>
+                                </td>
+                              ))}
+                            </tr>
                           ))}
-                        </tr>
+                        </React.Fragment>
                       ))}
                     </tbody>
                   </table>

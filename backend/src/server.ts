@@ -45,11 +45,17 @@ const ALL_ROLES = ['MEMBRO', 'VOLUNTARIO', 'AUXILIAR_LIDER', 'LIDER', 'PASTOR', 
 // ─── Permissões por cargo (matriz configurável em Admin > Cargos) ─────────
 // defaultMinRank define quem tem a permissão por padrão (cargo com rank >= mínimo).
 // A matriz salva em RolePermission sobrepõe o padrão; ADMIN sempre tem tudo (anti-lockout).
-const PERM_CATALOG: { key: string; label: string; description: string; defaultMinRank: number }[] = [
+const PERM_CATALOG: { key: string; label: string; description: string; category: string; defaultMinRank: number }[] = [
   // Obs.: resgate na Loja é livre (qualquer usuário com pontos) e a validação de voucher é
   // controlada pela flag "Atendente" por usuário (Admin > Membros), não pela matriz de cargos.
-  { key: 'EVENT_CHECKIN_CODE', label: 'Gerar QR de check-in de eventos',     description: 'Ver o código/QR de check-in para exibir no local do evento.',                       defaultMinRank: ROLE_RANK.ADMIN },
-  { key: 'GROUP_CREATE',       label: 'Criar grupos de leitura',             description: 'Criar novos grupos de competição do Plano Bíblico.',                                defaultMinRank: ROLE_RANK.MEMBRO },
+  { key: 'EVENT_CHECKIN_CODE',  label: 'Gerar QR de check-in de eventos', description: 'Ver o código/QR de check-in para exibir no local do evento.',        category: 'Eventos',       defaultMinRank: ROLE_RANK.ADMIN },
+  { key: 'EVENT_MANAGE',        label: 'Criar/editar/excluir eventos',    description: 'Gerenciar a agenda de eventos do app.',                              category: 'Eventos',       defaultMinRank: ROLE_RANK.ADMIN },
+  { key: 'GROUP_CREATE',        label: 'Criar grupos de leitura',         description: 'Criar novos grupos de competição do Plano Bíblico.',                 category: 'Plano Bíblico', defaultMinRank: ROLE_RANK.MEMBRO },
+  { key: 'READING_PLAN_MANAGE', label: 'Editar o Plano Bíblico',          description: 'Criar/editar planos de leitura anuais (Admin > Plano Bíblico).',      category: 'Plano Bíblico', defaultMinRank: ROLE_RANK.ADMIN },
+  { key: 'ANNOUNCEMENT_MANAGE', label: 'Gerenciar comunicados globais',   description: 'Criar/editar/excluir avisos do Mural Geral.',                        category: 'Comunicação',   defaultMinRank: ROLE_RANK.ADMIN },
+  { key: 'PUBLICATION_MANAGE',  label: 'Moderar publicações do mural',    description: 'Excluir publicações de qualquer pessoa no mural do Início, além das próprias.', category: 'Comunicação',   defaultMinRank: ROLE_RANK.ADMIN },
+  { key: 'POINT_RULE_MANAGE',   label: 'Editar regras de pontuação',      description: 'Ajustar quantos Zion Points cada ação concede (Gamificação).',       category: 'Gamificação',   defaultMinRank: ROLE_RANK.ADMIN },
+  { key: 'BUG_REPORT_MANAGE',   label: 'Ver e resolver bugs reportados',  description: 'Acessar a lista de bugs/sugestões enviados pelos membros.',          category: 'Sistema',       defaultMinRank: ROLE_RANK.ADMIN },
 ];
 
 const hasPerm = async (role: string | undefined, permKey: string): Promise<boolean> => {
@@ -426,9 +432,9 @@ app.post('/api/users/me/welcome', h(async (req, res) =>
 // --- REPORTAR BUG ---
 app.post('/api/bug-reports', validate(bugReportSchema), h(async (req, res) =>
   res.status(201).json(await prisma.bugReport.create({ data: { title: req.body.title, description: req.body.description, type: req.body.type || 'BUG', userId: req.user!.id } }))));
-app.get('/api/bug-reports', staffOnly,h(async (req, res) =>
+app.get('/api/bug-reports', requirePerm('BUG_REPORT_MANAGE'),h(async (req, res) =>
   res.json(await prisma.bugReport.findMany({ include: { user: { select: userPublic } }, orderBy: { createdAt: 'desc' } }))));
-app.patch('/api/bug-reports/:id', staffOnly,h(async (req, res) => {
+app.patch('/api/bug-reports/:id', requirePerm('BUG_REPORT_MANAGE'),h(async (req, res) => {
   const b = await prisma.bugReport.findUnique({ where: { id: pid(req) } });
   if (!b) return res.status(404).json({ error: 'Report não encontrado.' });
   res.json(await prisma.bugReport.update({ where: { id: pid(req) }, data: { status: b.status === 'RESOLVIDO' ? 'ABERTO' : 'RESOLVIDO' } }));
@@ -473,7 +479,7 @@ app.get('/api/permissions', adminOnly, h(async (req, res) => {
       const row = saved.find(s => s.role === role && s.permKey === p.key);
       matrix[role] = row ? row.allowed : roleRank(role) >= p.defaultMinRank;
     }
-    return { key: p.key, label: p.label, description: p.description, matrix };
+    return { key: p.key, label: p.label, description: p.description, category: p.category, matrix };
   });
   res.json({ roles: ALL_ROLES, permissions });
 }));
@@ -509,7 +515,7 @@ app.post('/api/publications', validate(publicationSchema), h(async (req, res) =>
 app.delete('/api/publications/:id', h(async (req, res) => {
   const pub = await prisma.publication.findUnique({ where: { id: pid(req) } });
   if (!pub) return res.status(404).json({ error: 'Publicação não encontrada.' });
-  if (pub.authorId !== req.user!.id && !isStaff(req)) return res.status(403).json({ error: FORBIDDEN });
+  if (pub.authorId !== req.user!.id && !isStaff(req) && !(await hasPerm(req.user?.role, 'PUBLICATION_MANAGE'))) return res.status(403).json({ error: FORBIDDEN });
   await prisma.publication.delete({ where: { id: pid(req) } });
   res.json({ message: "Deletado" });
 }));
@@ -519,9 +525,9 @@ const eventPublic = { id: true, title: true, date: true, location: true, type: t
 const genEventCode = () => randomBytes(3).toString('hex').toUpperCase(); // 6 caracteres
 
 app.get('/api/events', h(async (req, res) => res.json(await prisma.event.findMany({ where: req.query.type ? { type: String(req.query.type) } : undefined, select: eventPublic, orderBy: { date: 'asc' } }))));
-app.post('/api/events', staffOnly,validate(eventSchema), h(async (req, res) => res.status(201).json(await prisma.event.create({ data: { title: req.body.title, date: new Date(req.body.date), location: req.body.location, type: req.body.type, recurrence: req.body.recurrence, checkinCode: genEventCode() } }))));
-app.put('/api/events/:id', staffOnly,validate(eventSchema), h(async (req, res) => res.json(await prisma.event.update({ where: { id: pid(req) }, data: { title: req.body.title, date: new Date(req.body.date), location: req.body.location, type: req.body.type, recurrence: req.body.recurrence } }))));
-app.delete('/api/events/:id', staffOnly,h(async (req, res) => { await prisma.event.delete({ where: { id: pid(req) } }); res.json({ message: "Deletado" }); }));
+app.post('/api/events', requirePerm('EVENT_MANAGE'),validate(eventSchema), h(async (req, res) => res.status(201).json(await prisma.event.create({ data: { title: req.body.title, date: new Date(req.body.date), location: req.body.location, type: req.body.type, recurrence: req.body.recurrence, checkinCode: genEventCode() } }))));
+app.put('/api/events/:id', requirePerm('EVENT_MANAGE'),validate(eventSchema), h(async (req, res) => res.json(await prisma.event.update({ where: { id: pid(req) }, data: { title: req.body.title, date: new Date(req.body.date), location: req.body.location, type: req.body.type, recurrence: req.body.recurrence } }))));
+app.delete('/api/events/:id', requirePerm('EVENT_MANAGE'),h(async (req, res) => { await prisma.event.delete({ where: { id: pid(req) } }); res.json({ message: "Deletado" }); }));
 
 // Código de check-in (só admin — para exibir o QR)
 app.get('/api/events/:id/checkin-code', requirePerm('EVENT_CHECKIN_CODE'), h(async (req, res) => {
@@ -584,9 +590,9 @@ app.get('/api/events/stats', staffOnly, h(async (req, res) => {
 
 // --- COMUNICADOS ---
 app.get('/api/announcements', h(async (req, res) => res.json(await prisma.announcement.findMany({ where: req.query.type ? { type: String(req.query.type) } : undefined, orderBy: { createdAt: 'desc' } }))));
-app.post('/api/announcements', staffOnly,validate(announcementSchema), h(async (req, res) => res.status(201).json(await prisma.announcement.create({ data: req.body }))));
-app.put('/api/announcements/:id', staffOnly,validate(announcementSchema), h(async (req, res) => res.json(await prisma.announcement.update({ where: { id: pid(req) }, data: req.body }))));
-app.delete('/api/announcements/:id', staffOnly,h(async (req, res) => { await prisma.announcement.delete({ where: { id: pid(req) } }); res.json({ message: "Deletado" }); }));
+app.post('/api/announcements', requirePerm('ANNOUNCEMENT_MANAGE'),validate(announcementSchema), h(async (req, res) => res.status(201).json(await prisma.announcement.create({ data: req.body }))));
+app.put('/api/announcements/:id', requirePerm('ANNOUNCEMENT_MANAGE'),validate(announcementSchema), h(async (req, res) => res.json(await prisma.announcement.update({ where: { id: pid(req) }, data: req.body }))));
+app.delete('/api/announcements/:id', requirePerm('ANNOUNCEMENT_MANAGE'),h(async (req, res) => { await prisma.announcement.delete({ where: { id: pid(req) } }); res.json({ message: "Deletado" }); }));
 
 // --- ÁREAS (VOLUNTARIADO) ---
 app.get('/api/areas', h(async (req, res) => {
@@ -955,13 +961,13 @@ app.post('/api/redemptions/consume', canValidateVoucher, validate(consumeSchema)
 
 // --- GAMIFICAÇÃO (regras de pontos) ---
 app.get('/api/point-rules', h(async (req, res) => res.json(await prisma.pointRule.findMany({ orderBy: { category: 'asc' } }))));
-app.post('/api/point-rules', staffOnly,validate(pointRuleSchema), h(async (req, res) => {
+app.post('/api/point-rules', requirePerm('POINT_RULE_MANAGE'),validate(pointRuleSchema), h(async (req, res) => {
   try {
     res.status(201).json(await prisma.pointRule.create({ data: req.body }));
   } catch { res.status(409).json({ error: 'Já existe uma regra com essa chave.' }); }
 }));
-app.put('/api/point-rules/:id', staffOnly,validate(pointRuleUpdateSchema), h(async (req, res) => res.json(await prisma.pointRule.update({ where: { id: pid(req) }, data: req.body }))));
-app.delete('/api/point-rules/:id', staffOnly,h(async (req, res) => { await prisma.pointRule.delete({ where: { id: pid(req) } }); res.json({ message: "Removido" }); }));
+app.put('/api/point-rules/:id', requirePerm('POINT_RULE_MANAGE'),validate(pointRuleUpdateSchema), h(async (req, res) => res.json(await prisma.pointRule.update({ where: { id: pid(req) }, data: req.body }))));
+app.delete('/api/point-rules/:id', requirePerm('POINT_RULE_MANAGE'),h(async (req, res) => { await prisma.pointRule.delete({ where: { id: pid(req) } }); res.json({ message: "Removido" }); }));
 
 // --- PLANO BÍBLICO ---
 // Progresso do usuário + leitura de hoje
