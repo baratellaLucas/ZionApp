@@ -170,7 +170,9 @@ const redeemFlagSchema = z.object({ canRedeem: z.boolean() });
 const publicationSchema = z.object({ content: z.string().min(1), imageUrl: z.string().optional(), documentUrl: z.string().optional() });
 const eventSchema = z.object({ title: z.string().min(1), date: z.string().min(1), location: z.string().optional(), type: z.string().optional(), recurrence: z.enum(['NONE', 'WEEKLY', 'MONTHLY']).optional() });
 const announcementSchema = z.object({ title: z.string().min(1), content: z.string().min(1), type: z.string().optional() });
-const areaSchema = z.object({ name: z.string().min(1), description: z.string().optional().nullable(), leaderId: z.string().min(1) });
+const areaSchema = z.object({ name: z.string().min(1), description: z.string().optional().nullable(), leaderId: z.string().min(1), icon: z.string().optional() });
+const positionSchema = z.object({ name: z.string().min(1).max(60) });
+const availabilitySchema = z.object({ weekday: z.number().int().min(0).max(6), period: z.enum(['MANHA', 'TARDE', 'NOITE']) });
 const linkSchema = z.object({
   name: z.string().min(1), day: z.string().min(1), time: z.string().min(1),
   isOnline: z.boolean().optional(), locationUrl: z.string().optional().nullable(),
@@ -207,7 +209,7 @@ const pointRuleUpdateSchema = pointRuleSchema.partial();
 const readingCheckSchema = z.object({ photoUrl: z.string().optional(), groupIds: z.array(z.string()).optional(), comment: z.string().optional() }); // foto/comentário opcionais; groupIds = grupos p/ compartilhar
 const commentSchema = z.object({ content: z.string().min(1) });
 const reactSchema = z.object({ emoji: z.string().min(1).max(16) });
-const shiftSchema = z.object({ date: z.string().min(1), volunteerId: z.string().optional().nullable(), department: z.string().optional() });
+const shiftSchema = z.object({ date: z.string().min(1), volunteerId: z.string().optional().nullable(), department: z.string().optional(), positionId: z.string().optional().nullable() });
 
 // Marcos de sequência do plano bíblico (dias acumulados de leitura)
 const READING_MILESTONES = [10, 20, 30, 45, 60];
@@ -603,13 +605,62 @@ app.post('/api/areas/:id/shifts', validate(shiftSchema), h(async (req, res) => {
   if (area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode criar escalas.' });
   const when = new Date(req.body.date);
   if (isNaN(when.getTime())) return res.status(400).json({ error: 'Data inválida.' });
-  const shift = await prisma.shift.create({ data: { areaId: area.id, department: area.name, date: when, volunteerId: req.body.volunteerId || null, status: 'Pendente' }, include: { user: { select: userPublic } } });
+  const shift = await prisma.shift.create({ data: { areaId: area.id, department: area.name, date: when, volunteerId: req.body.volunteerId || null, positionId: req.body.positionId || null, status: 'Pendente' }, include: { user: { select: userPublic }, position: true } });
   if (req.body.volunteerId) notify(req.body.volunteerId, 'INFO', 'Você foi escalado', `Nova escala em "${area.name}" para ${new Date(req.body.date).toLocaleDateString('pt-BR')}. Confirme sua presença!`, area.id, 'voluntarios:escala');
   res.status(201).json(shift);
 }));
 
 // Lista turnos de uma área
-app.get('/api/areas/:id/shifts', h(async (req, res) => res.json(await prisma.shift.findMany({ where: { areaId: pid(req) }, include: { user: { select: userPublic } }, orderBy: { date: 'asc' } }))));
+app.get('/api/areas/:id/shifts', h(async (req, res) => res.json(await prisma.shift.findMany({ where: { areaId: pid(req) }, include: { user: { select: userPublic }, position: true }, orderBy: { date: 'asc' } }))));
+
+// --- POSIÇÕES DA ÁREA (ex.: Balcão, Forno, Barista) — criadas só pelo líder/staff ---
+app.get('/api/areas/:id/positions', h(async (req, res) => res.json(await prisma.areaPosition.findMany({ where: { areaId: pid(req) }, orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] }))));
+app.post('/api/areas/:id/positions', validate(positionSchema), h(async (req, res) => {
+  const area = await prisma.area.findUnique({ where: { id: pid(req) } });
+  if (!area) return res.status(404).json({ error: 'Área não encontrada.' });
+  if (area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode criar posições.' });
+  const count = await prisma.areaPosition.count({ where: { areaId: area.id } });
+  try {
+    const position = await prisma.areaPosition.create({ data: { areaId: area.id, name: req.body.name, order: count } });
+    res.status(201).json(position);
+  } catch { res.status(409).json({ error: 'Já existe uma posição com esse nome nesta área.' }); }
+}));
+app.delete('/api/areas/positions/:id', h(async (req, res) => {
+  const position = await prisma.areaPosition.findUnique({ where: { id: pid(req) }, include: { area: true } });
+  if (!position) return res.status(404).json({ error: 'Posição não encontrada.' });
+  if (position.area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode remover posições.' });
+  await prisma.areaPosition.delete({ where: { id: pid(req) } });
+  res.json({ message: 'Removido' });
+}));
+
+// --- DISPONIBILIDADE SEMANAL (dia + período) do voluntário para uma área ---
+// Marca/desmarca (toggle) — só quem é participante aprovado da área ou o líder/staff.
+app.post('/api/areas/:id/availability', validate(availabilitySchema), h(async (req, res) => {
+  const areaId = pid(req);
+  const isLeaderOrStaff = (await prisma.area.findUnique({ where: { id: areaId } }))?.leaderId === req.user!.id || await hasModuleAccess(req, 'areas');
+  if (!isLeaderOrStaff) {
+    const part = await prisma.areaParticipation.findUnique({ where: { userId_areaId: { userId: req.user!.id, areaId } } });
+    if (!part || part.status !== 'APROVADO') return res.status(403).json({ error: 'Apenas voluntários aprovados podem marcar disponibilidade.' });
+  }
+  const existing = await prisma.availability.findUnique({ where: { userId_areaId_weekday_period: { userId: req.user!.id, areaId, weekday: req.body.weekday, period: req.body.period } } });
+  if (existing) { await prisma.availability.delete({ where: { id: existing.id } }); return res.json({ toggled: 'removed' }); }
+  await prisma.availability.create({ data: { userId: req.user!.id, areaId, weekday: req.body.weekday, period: req.body.period } });
+  res.json({ toggled: 'added' });
+}));
+// Minha disponibilidade nesta área
+app.get('/api/areas/:id/availability/mine', h(async (req, res) => res.json(await prisma.availability.findMany({ where: { areaId: pid(req), userId: req.user!.id } }))));
+// Disponibilidade de todos os voluntários aprovados da área (líder/staff) — filtro opcional por dia/período
+app.get('/api/areas/:id/availability', h(async (req, res) => {
+  const areaId = pid(req);
+  const area = await prisma.area.findUnique({ where: { id: areaId } });
+  if (!area) return res.status(404).json({ error: 'Área não encontrada.' });
+  if (area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode ver a disponibilidade da equipe.' });
+  const where: Record<string, unknown> = { areaId };
+  if (req.query.weekday !== undefined) where.weekday = Number(req.query.weekday);
+  if (req.query.period) where.period = String(req.query.period);
+  const rows = await prisma.availability.findMany({ where, include: { user: { select: userPublic } } });
+  res.json(rows);
+}));
 
 // Remove turno (líder da área/admin)
 app.delete('/api/shifts/:id', h(async (req, res) => {

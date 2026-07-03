@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { compressImage, fileToDataUrl } from '../utils/image';
+import { AREA_ICON_CATALOG, getAreaIconComponent } from '../utils/areaIcons';
 import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Users, Eye, Briefcase, Gift, Ticket, Tag, CheckCircle, Zap, BarChart3, BookOpen, Award, QrCode, Bug } from 'lucide-react';
 
 // Locais pré-definidos para eventos (menu de seleção); "Outro" libera um campo de texto livre.
@@ -39,7 +40,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   const [linkData, setLinkData] = useState({ name: '', day: 'Sexta', time: '20:00', leaderId: '', isOnline: false, locationUrl: '', description: '' });
   const [annData, setAnnData] = useState({ title: '', content: '', type: 'GERAL' });
   const [pubData, setPubData] = useState({ content: '', imageUrl: '', documentUrl: '' });
-  const [areaData, setAreaData] = useState({ name: '', description: '', leaderId: '' });
+  const [areaData, setAreaData] = useState({ name: '', description: '', leaderId: '', icon: 'Briefcase' });
   
   const [eventDateStr, setEventDateStr] = useState(''); // formato nativo YYYY-MM-DD
   const [eventTimeStr, setEventTimeStr] = useState('');
@@ -633,7 +634,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
             <div className="space-y-4">
               <div className="flex justify-between items-center">
                 <h3 className="text-lg font-bold text-text-primary">Gestão de Áreas (Voluntários)</h3>
-                <button onClick={() => { setShowAreaForm(!showAreaForm); setEditingAreaId(null); setAreaData({ name: '', description: '', leaderId: leaders[0]?.id || '' }); }} className="bg-brand-primary text-white px-4 py-2 rounded-md font-bold text-sm flex gap-2 items-center outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                <button onClick={() => { setShowAreaForm(!showAreaForm); setEditingAreaId(null); setAreaData({ name: '', description: '', leaderId: leaders[0]?.id || '', icon: 'Briefcase' }); }} className="bg-brand-primary text-white px-4 py-2 rounded-md font-bold text-sm flex gap-2 items-center outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
                   {showAreaForm ? <X className="w-4 h-4"/> : <Plus className="w-4 h-4"/>} {showAreaForm ? 'Cancelar' : 'Nova Área'}
                 </button>
               </div>
@@ -651,23 +652,45 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                     </div>
                   </div>
                   <textarea value={areaData.description} onChange={e => setAreaData({...areaData, description: e.target.value})} placeholder="Descrição das responsabilidades da área" rows="2" className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 focus:border-brand-primary"></textarea>
+                  <div>
+                    <label className="text-xs text-text-muted mb-2 block">Ícone da Área</label>
+                    <div className="grid grid-cols-6 sm:grid-cols-9 gap-2">
+                      {AREA_ICON_CATALOG.map(({ key, Icon, label }) => (
+                        <button
+                          key={key}
+                          type="button"
+                          onClick={() => setAreaData({ ...areaData, icon: key })}
+                          title={label}
+                          className={`aspect-square flex items-center justify-center rounded-md border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${areaData.icon === key ? 'bg-brand-primary/20 border-brand-primary text-brand-primary' : 'bg-surface-dark border-white/10 text-text-muted hover:text-white hover:border-white/30'}`}
+                        >
+                          <Icon className="w-4 h-4"/>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
                   <button type="submit" className="w-full bg-brand-primary text-white py-2 rounded-md font-bold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">{editingAreaId ? 'Salvar Edição' : 'Criar Área'}</button>
                 </form>
               )}
 
               <div className="grid gap-3">
-                {areas.map(a => (
+                {areas.map(a => {
+                  const AIcon = getAreaIconComponent(a.icon);
+                  return (
                   <div key={a.id} className="bg-surface-card border border-white/5 p-4 rounded-default flex justify-between items-center">
-                    <div>
-                      <div className="font-bold text-white text-lg">{a.name}</div>
-                      <div className="text-sm text-text-muted">Líder: {a.leader?.name || 'Não vinculado'}</div>
+                    <div className="flex items-center gap-3">
+                      <div className="w-9 h-9 rounded-full bg-brand-primary/10 text-brand-primary flex items-center justify-center shrink-0"><AIcon className="w-4 h-4"/></div>
+                      <div>
+                        <div className="font-bold text-white text-lg">{a.name}</div>
+                        <div className="text-sm text-text-muted">Líder: {a.leader?.name || 'Não vinculado'}</div>
+                      </div>
                     </div>
                     <div className="flex gap-2">
-                      <button onClick={() => { setEditingAreaId(a.id); setAreaData({ name: a.name, description: a.description || '', leaderId: a.leaderId || '' }); setShowAreaForm(true); }} className="p-2 hover:bg-white/10 rounded-md text-brand-primary" title="Editar"><Edit3 className="w-5 h-5"/></button>
+                      <button onClick={() => { setEditingAreaId(a.id); setAreaData({ name: a.name, description: a.description || '', leaderId: a.leaderId || '', icon: a.icon || 'Briefcase' }); setShowAreaForm(true); }} className="p-2 hover:bg-white/10 rounded-md text-brand-primary" title="Editar"><Edit3 className="w-5 h-5"/></button>
                       <button onClick={() => setDeleteConfirm({ isOpen: true, type: 'areas', id: a.id, title: 'Excluir Área' })} className="p-2 hover:bg-red-500/20 text-text-muted hover:text-red-400 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Trash2 className="w-5 h-5"/></button>
                     </div>
                   </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           )}

@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import Avatar from '../components/Avatar';
+import { getAreaIconComponent } from '../utils/areaIcons';
 import {
-  CalendarDays, Coffee, Smile, Music, Megaphone, Briefcase, Clock,
+  CalendarDays, Smile, Megaphone, Briefcase, Clock,
   CheckCircle, GraduationCap, Users, MessageSquare, ShieldCheck,
-  Award, Gift, X, Save, BookOpen, Trash2, AlertTriangle, Heart,
+  Award, Gift, X, BookOpen, Trash2, AlertTriangle, Heart,
   Send, Pin, BarChart3, Plus, Loader2, Eye
 } from 'lucide-react';
 
@@ -24,12 +25,12 @@ const isIntercessionName = (name) => {
   return n.includes('interce') || n.includes('interse');
 };
 
-// As áreas vêm do backend sem ícone/cor; aplicamos uma paleta visual por índice.
-const AREA_STYLES = [
-  { Icon: Coffee, color: 'text-amber-500',   bg: 'bg-amber-500/10' },
-  { Icon: Smile,  color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
-  { Icon: Music,  color: 'text-purple-500',  bg: 'bg-purple-500/10' },
-  { Icon: Users,  color: 'text-blue-500',    bg: 'bg-blue-500/10' },
+// Ícone vem de area.icon (escolhido no Admin); a cor ainda cicla por índice para variar visualmente.
+const AREA_COLOR_STYLES = [
+  { color: 'text-amber-500',   bg: 'bg-amber-500/10' },
+  { color: 'text-emerald-500', bg: 'bg-emerald-500/10' },
+  { color: 'text-purple-500',  bg: 'bg-purple-500/10' },
+  { color: 'text-blue-500',    bg: 'bg-blue-500/10' },
 ];
 const DEFAULT_AREA_STYLE = { Icon: Briefcase, color: 'text-brand-primary', bg: 'bg-brand-primary/10' };
 
@@ -56,7 +57,12 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   const [areaRequests,     setAreaRequests]     = useState({}); // { areaId: [participações PENDENTE] }
   const [areaApproved,     setAreaApproved]     = useState({}); // { areaId: [membros aprovados] }
   const [areaShifts,       setAreaShifts]       = useState({}); // { areaId: [escalas] }
-  const [shiftDrafts,      setShiftDrafts]      = useState({}); // { areaId: { date, volunteerId } }
+  const [shiftDrafts,      setShiftDrafts]      = useState({}); // { areaId: { date, volunteerId, positionId } }
+  const [areaPositions,    setAreaPositions]    = useState({}); // { areaId: [AreaPosition] }
+  const [newPositionName,  setNewPositionName]  = useState({}); // { areaId: string }
+  const [events,           setEvents]           = useState([]);
+  const [scheduleEventId,  setScheduleEventId]  = useState({}); // { areaId: eventId }
+  const [availableForEvent,setAvailableForEvent]= useState({}); // { areaId: [userId] }
   const [isLoading,        setIsLoading]        = useState(true);
   // Pedidos de oração (equipe de intercessão)
   const [canViewPrayers,   setCanViewPrayers]   = useState(false);
@@ -217,18 +223,20 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     const fetchData = async () => {
       try {
         const query = user?.id ? `?userId=${user.id}` : '';
-        const [resAreas, resMine, resShifts, resAnn, resPoints, resPray] = await Promise.all([
+        const [resAreas, resMine, resShifts, resAnn, resPoints, resPray, resEvents] = await Promise.all([
           apiFetch(`/api/areas`).catch(() => null),
           user?.id ? apiFetch(`/api/areas/my-participations?userId=${user.id}`).catch(() => null) : null,
           apiFetch(`/api/shifts${query}`).catch(() => null),
           apiFetch(`/api/announcements?type=VOLUNTARIO`).catch(() => null),
           apiFetch(`/api/points/mine`).catch(() => null),
           apiFetch(`/api/prayer-requests/access`).catch(() => null),
+          apiFetch(`/api/events`).catch(() => null),
         ]);
         if (resAreas && resAreas.ok) setAreas(await resAreas.json());
         if (resMine && resMine.ok) setMyAreas(await resMine.json());
         if (resShifts && resShifts.ok) setShifts(await resShifts.json());
         if (resAnn && resAnn.ok) setAnnouncements(await resAnn.json());
+        if (resEvents && resEvents.ok) setEvents(await resEvents.json());
         if (resPoints && resPoints.ok) {
           const awards = await resPoints.json();
           if (awards.some(a => a.ruleKey === 'TRAINING_COMPLETION')) setTrainingProgress(100);
@@ -264,7 +272,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   };
   useEffect(() => {
     if (activeTab !== 'minhas_areas' || !user?.id) return;
-    areas.filter(a => a.leaderId === user.id).forEach(a => loadLeaderArea(a.id));
+    areas.filter(a => a.leaderId === user.id).forEach(a => { loadLeaderArea(a.id); loadAreaPositions(a.id); });
   }, [activeTab, areas, user?.id]);
 
   // Aprovar / recusar solicitação de participação na área
@@ -286,8 +294,8 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     const d = shiftDrafts[areaId] || {};
     if (!d.date) return showNotification('Informe a data da escala.');
     try {
-      const res = await apiFetch(`/api/areas/${areaId}/shifts`, { method: 'POST', body: { date: new Date(d.date).toISOString(), volunteerId: d.volunteerId || null } });
-      if (res.ok) { setShiftDrafts(prev => ({ ...prev, [areaId]: { date: '', volunteerId: '' } })); loadLeaderArea(areaId); showNotification('Escala criada!'); }
+      const res = await apiFetch(`/api/areas/${areaId}/shifts`, { method: 'POST', body: { date: new Date(d.date).toISOString(), volunteerId: d.volunteerId || null, positionId: d.positionId || null } });
+      if (res.ok) { setShiftDrafts(prev => ({ ...prev, [areaId]: { date: '', volunteerId: '', positionId: '' } })); loadLeaderArea(areaId); showNotification('Escala criada!'); }
       else { const e = await res.json().catch(() => ({})); showNotification(e.error || 'Falha ao criar escala.'); }
     } catch { showNotification('Falha de rede.'); }
   };
@@ -305,7 +313,8 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   // Estilo (ícone/cor) de uma área pelo seu índice no catálogo; fallback padrão.
   const styleForAreaId = (areaId) => {
     const idx = areas.findIndex(a => a.id === areaId);
-    return idx === -1 ? DEFAULT_AREA_STYLE : AREA_STYLES[idx % AREA_STYLES.length];
+    if (idx === -1) return DEFAULT_AREA_STYLE;
+    return { Icon: getAreaIconComponent(areas[idx].icon), ...AREA_COLOR_STYLES[idx % AREA_COLOR_STYLES.length] };
   };
 
   const activeAreaDetails = selectedAreaId ? areas.find(a => a.id === selectedAreaId) : null;
@@ -406,6 +415,85 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     setMuralMsgs([]);
     // Carrega a equipe real (membros aprovados) para a aba "Equipe"
     loadAreaTeam(areaId);
+    loadMyAvailability(areaId);
+    loadAreaPositions(areaId);
+  };
+
+  // ─── disponibilidade semanal (dia + período) ───────────────────────────────
+  const DIAS = ['Segunda', 'Terça', 'Quarta', 'Quinta', 'Sexta', 'Sábado', 'Domingo'];
+  const WEEKDAY_NUM = { 'Domingo': 0, 'Segunda': 1, 'Terça': 2, 'Quarta': 3, 'Quinta': 4, 'Sexta': 5, 'Sábado': 6 };
+  const PERIOD_KEY = { M: 'MANHA', T: 'TARDE', N: 'NOITE' };
+  const PERIOD_LETTER = { MANHA: 'M', TARDE: 'T', NOITE: 'N' };
+  const periodFromHour = (h) => (h < 12 ? 'MANHA' : h < 18 ? 'TARDE' : 'NOITE');
+
+  const loadMyAvailability = async (areaId) => {
+    try {
+      const res = await apiFetch(`/api/areas/${areaId}/availability/mine`).catch(() => null);
+      if (!res || !res.ok) return;
+      const rows = await res.json();
+      const next = {};
+      rows.forEach(r => {
+        const dia = Object.keys(WEEKDAY_NUM).find(k => WEEKDAY_NUM[k] === r.weekday);
+        const letra = PERIOD_LETTER[r.period];
+        if (!dia || !letra) return;
+        next[dia] = { ...(next[dia] || {}), [letra]: true };
+      });
+      setAvailability(next);
+    } catch { /* ignora */ }
+  };
+
+  const toggleAvailability = async (areaId, dia, periodo) => {
+    const current = availability[dia] || { M: false, T: false, N: false };
+    const wasChecked = !!current[periodo];
+    setAvailability(prev => ({ ...prev, [dia]: { ...current, [periodo]: !wasChecked } }));
+    try {
+      const res = await apiFetch(`/api/areas/${areaId}/availability`, { method: 'POST', body: { weekday: WEEKDAY_NUM[dia], period: PERIOD_KEY[periodo] } });
+      if (!res.ok) throw new Error();
+    } catch {
+      setAvailability(prev => ({ ...prev, [dia]: { ...current, [periodo]: wasChecked } }));
+      showNotification('Falha ao salvar disponibilidade.');
+    }
+  };
+
+  // ─── posições da área (ex.: Balcão, Forno, Barista) — só líder/staff ─────
+  const loadAreaPositions = async (areaId) => {
+    try {
+      const res = await apiFetch(`/api/areas/${areaId}/positions`).catch(() => null);
+      if (res && res.ok) { const rows = await res.json(); setAreaPositions(prev => ({ ...prev, [areaId]: rows })); }
+    } catch { /* ignora */ }
+  };
+  const handleAddPosition = async (areaId) => {
+    const name = (newPositionName[areaId] || '').trim();
+    if (!name) return;
+    try {
+      const res = await apiFetch(`/api/areas/${areaId}/positions`, { method: 'POST', body: { name } });
+      if (res.ok) { setNewPositionName(prev => ({ ...prev, [areaId]: '' })); loadAreaPositions(areaId); }
+      else { const e = await res.json().catch(() => ({})); showNotification(e.error || 'Falha ao criar posição.'); }
+    } catch { showNotification('Falha de rede.'); }
+  };
+  const handleDeletePosition = async (positionId, areaId) => {
+    try {
+      const res = await apiFetch(`/api/areas/positions/${positionId}`, { method: 'DELETE' });
+      if (res.ok) setAreaPositions(prev => ({ ...prev, [areaId]: (prev[areaId] || []).filter(p => p.id !== positionId) }));
+    } catch { showNotification('Falha de rede.'); }
+  };
+
+  // ─── filtro de escala por evento existente (dia/período do evento → voluntários disponíveis) ─
+  const handleScheduleEventFilter = async (areaId, eventId) => {
+    setScheduleEventId(prev => ({ ...prev, [areaId]: eventId }));
+    if (!eventId) { setAvailableForEvent(prev => ({ ...prev, [areaId]: null })); return; }
+    const ev = events.find(e => e.id === eventId);
+    if (!ev) return;
+    const d = new Date(ev.date);
+    const weekday = d.getDay();
+    const period = periodFromHour(d.getHours());
+    try {
+      const res = await apiFetch(`/api/areas/${areaId}/availability?weekday=${weekday}&period=${period}`).catch(() => null);
+      if (res && res.ok) {
+        const rows = await res.json();
+        setAvailableForEvent(prev => ({ ...prev, [areaId]: rows.map(r => r.user).filter(Boolean) }));
+      }
+    } catch { /* ignora */ }
   };
 
   const loadAreaTeam = async (areaId) => {
@@ -588,9 +676,37 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                     )}
 
                     {isLeader && (() => {
+                      const positions = areaPositions[areaDetails.id] || [];
+                      const posDraft = newPositionName[areaDetails.id] || '';
+                      return (
+                        <div className="p-4 border-t border-white/5 bg-surface-dark/30">
+                          <h4 className="text-sm font-bold text-text-primary mb-3 flex items-center gap-2"><Briefcase className="w-4 h-4"/> Posições da Área ({positions.length})</h4>
+                          {positions.length > 0 && (
+                            <div className="flex flex-wrap gap-2 mb-3">
+                              {positions.map(p => (
+                                <span key={p.id} className="flex items-center gap-1.5 bg-surface-card border border-white/10 text-white text-xs px-2.5 py-1.5 rounded-full">
+                                  {p.name}
+                                  <button onClick={() => handleDeletePosition(p.id, areaDetails.id)} title="Remover posição" className="text-text-muted hover:text-red-400 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-3 h-3"/></button>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                          <div className="flex gap-2">
+                            <input type="text" value={posDraft} onChange={e => setNewPositionName(prev => ({ ...prev, [areaDetails.id]: e.target.value }))} placeholder="Nova posição (ex: Barista)" maxLength={60} className="flex-1 bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60" />
+                            <button onClick={() => handleAddPosition(areaDetails.id)} className="bg-surface-card border border-white/10 hover:border-brand-primary text-white px-4 py-2 rounded-md text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Adicionar</button>
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {isLeader && (() => {
                       const sh = areaShifts[areaDetails.id] || [];
                       const approved = areaApproved[areaDetails.id] || [];
                       const draft = shiftDrafts[areaDetails.id] || {};
+                      const positions = areaPositions[areaDetails.id] || [];
+                      const selEventId = scheduleEventId[areaDetails.id] || '';
+                      const matches = availableForEvent[areaDetails.id];
+                      const recurringEvents = events.filter(e => e.type === 'VOLUNTARIO' || e.recurrence !== 'NONE');
                       return (
                         <div className="p-4 border-t border-white/5 bg-surface-dark/30">
                           <h4 className="text-sm font-bold text-text-primary mb-3 flex items-center gap-2"><CalendarDays className="w-4 h-4"/> Escalas ({sh.length})</h4>
@@ -600,7 +716,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                                 <div className="flex items-center gap-2 min-w-0">
                                   <Avatar name={s.user?.name || '?'} src={s.user?.profileImage} size={26} />
                                   <div className="min-w-0">
-                                    <div className="text-white truncate">{s.user?.name || 'Vaga aberta'}</div>
+                                    <div className="text-white truncate">{s.user?.name || 'Vaga aberta'}{s.position?.name ? ` • ${s.position.name}` : ''}</div>
                                     <div className="text-xs text-text-muted">{new Date(s.date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} • {s.status}</div>
                                   </div>
                                 </div>
@@ -608,12 +724,42 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                               </div>
                             ))}
                           </div>
+
+                          {recurringEvents.length > 0 && (
+                            <div className="mb-3 bg-surface-card border border-white/10 rounded-md p-3">
+                              <label className="text-xs text-text-muted mb-1.5 block">Filtrar disponíveis por evento (dia/período)</label>
+                              <select value={selEventId} onChange={e => handleScheduleEventFilter(areaDetails.id, e.target.value)} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                                <option value="">Selecione um evento...</option>
+                                {recurringEvents.map(e => <option key={e.id} value={e.id}>{e.title}</option>)}
+                              </select>
+                              {selEventId && (
+                                <div className="mt-2 text-xs text-text-muted">
+                                  {matches === undefined ? null : matches === null ? null : matches.length === 0 ? 'Nenhum voluntário marcou disponibilidade nesse dia/período.' : (
+                                    <div className="flex flex-wrap gap-1.5 mt-1">
+                                      {matches.map(u => (
+                                        <button key={u.id} onClick={() => setDraft(areaDetails.id, { volunteerId: u.id })} className="flex items-center gap-1.5 bg-brand-primary/10 border border-brand-primary/30 text-brand-primary text-xs px-2 py-1 rounded-full hover:bg-brand-primary/20 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                                          <Avatar name={u.name} src={u.profileImage} size={16} /> {u.name}
+                                        </button>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+                            </div>
+                          )}
+
                           <div className="flex flex-col sm:flex-row gap-2">
                             <input type="datetime-local" value={draft.date || ''} onChange={e => setDraft(areaDetails.id, { date: e.target.value })} className="flex-1 bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 [color-scheme:dark]" />
                             <select value={draft.volunteerId || ''} onChange={e => setDraft(areaDetails.id, { volunteerId: e.target.value })} className="bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
                               <option value="">Vaga aberta</option>
                               {approved.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
                             </select>
+                            {positions.length > 0 && (
+                              <select value={draft.positionId || ''} onChange={e => setDraft(areaDetails.id, { positionId: e.target.value })} className="bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                                <option value="">Sem posição</option>
+                                {positions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                              </select>
+                            )}
                             <button onClick={() => handleCreateShift(areaDetails.id)} className="bg-brand-primary text-white px-4 py-2 rounded-md font-bold text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Escalar</button>
                           </div>
                         </div>
@@ -716,9 +862,8 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                     <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-4 mb-4">
                       <div>
                         <h4 className="text-sm font-bold text-text-primary flex items-center gap-2"><Clock className="w-4 h-4 text-brand-primary"/> Disponibilidade Semanal</h4>
-                        <p className="text-xs text-text-muted mt-1">Informe em quais dias e períodos pode servir.</p>
+                        <p className="text-xs text-text-muted mt-1">Toque para marcar/desmarcar — salva automaticamente.</p>
                       </div>
-                      <button onClick={() => showNotification('Disponibilidade salva com sucesso!')} className="text-sm bg-surface-card border border-white/10 text-white px-5 py-2 rounded-md hover:bg-brand-primary hover:border-brand-primary flex items-center gap-2 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 font-bold transition-colors w-full sm:w-auto justify-center"><Save className="w-4 h-4"/> Salvar</button>
                     </div>
                     <div className="overflow-x-auto border border-white/10 rounded-md">
                       <table className="w-full text-sm text-left border-collapse bg-surface-dark">
@@ -739,10 +884,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                                 return (
                                   <td key={periodo} className="py-3 text-center">
                                     <button
-                                      onClick={() => {
-                                        const current = availability[dia] || { M: false, T: false, N: false };
-                                        setAvailability({ ...availability, [dia]: { ...current, [periodo]: !isChecked } });
-                                      }}
+                                      onClick={() => toggleAvailability(selectedAreaId, dia, periodo)}
                                       className={`w-6 h-6 rounded border flex items-center justify-center mx-auto transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${isChecked ? 'bg-brand-primary border-brand-primary text-white shadow-[0_0_8px_rgba(0,184,169,0.5)]' : 'bg-surface-card border-white/20 text-transparent hover:border-brand-primary/50'}`}
                                     ><CheckCircle className="w-4 h-4"/></button>
                                   </td>
