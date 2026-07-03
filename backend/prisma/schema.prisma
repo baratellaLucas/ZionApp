@@ -140,6 +140,18 @@ model ReadingLog {
   @@unique([userId, day])
 }
 
+// Plano de leitura bíblica editável por ano (Admin > Plano Bíblico). O plano usado no dia a dia
+// é o que corresponde ao ano corrente; se não houver um configurado, cai no dataset padrão.
+model ReadingPlan {
+  id         String   @id @default(uuid())
+  year       Int      @unique
+  label      String // ex: "Plano Bíblico 2026"
+  days       Json // array de strings, 1 referência por dia (índice 0 = dia 1)
+  spotifyUrl String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
 // Permissões por cargo (matriz configurável no Admin > Cargos)
 model RolePermission {
   id      String  @id @default(uuid())

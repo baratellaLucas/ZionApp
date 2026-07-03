@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { apiFetch } from '../api';
-import { Award, BookOpen, Calendar, Clock, CheckCircle, ChevronLeft, ChevronRight, CalendarDays, Megaphone, Heart, MessageSquare, Flame, Camera, X, Loader2, Trophy, Sparkles } from 'lucide-react';
+import { Award, BookOpen, Calendar, Clock, CheckCircle, ChevronLeft, ChevronRight, CalendarDays, Megaphone, Heart, MessageSquare, Flame, Camera, X, Loader2, Trophy, Sparkles, Music } from 'lucide-react';
 import GroupsPanel from './GroupsPanel';
 const QrScanner = lazy(() => import('../components/QrScanner'));
 import { compressImage, fileToDataUrl } from '../utils/image';
@@ -329,6 +329,9 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
           <button onClick={openReadingText} className="sm:w-auto bg-surface-dark border border-white/10 text-white py-2.5 px-4 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-white/5"><BookOpen className="w-4 h-4"/> Ler agora</button>
           <button onClick={() => setShowGroups(true)} className="sm:w-auto bg-surface-dark border border-orange-500/30 text-orange-300 py-2.5 px-4 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-orange-500/10"><Trophy className="w-4 h-4"/> Grupos</button>
           <button onClick={() => setShowSimulator(true)} className="sm:w-auto bg-surface-dark border border-orange-500/30 text-orange-300 py-2.5 px-4 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-orange-500/10"><Sparkles className="w-4 h-4"/> Simular</button>
+          {reading?.spotifyUrl && (
+            <a href={reading.spotifyUrl} target="_blank" rel="noopener noreferrer" className="sm:w-auto bg-surface-dark border border-emerald-500/30 text-emerald-300 py-2.5 px-4 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-emerald-500/10"><Music className="w-4 h-4"/> Ouvir no Spotify</a>
+          )}
         </div>
       </div>
 

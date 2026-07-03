@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { compressImage, fileToDataUrl } from '../utils/image';
 import { AREA_ICON_CATALOG, getAreaIconComponent } from '../utils/areaIcons';
-import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Users, Eye, Briefcase, Gift, Ticket, Tag, CheckCircle, Zap, BarChart3, BookOpen, Award, QrCode, Bug, Trophy, Flame } from 'lucide-react';
+import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Users, Eye, Briefcase, Gift, Ticket, Tag, CheckCircle, Zap, BarChart3, BookOpen, Award, QrCode, Bug, Trophy, Flame, BookMarked, Music } from 'lucide-react';
 
 // Locais pré-definidos para eventos (menu de seleção); "Outro" libera um campo de texto livre.
 const EVENT_LOCATIONS = ['Campus Zion RP', 'Templo Principal', 'Auditório', 'Sala de Reuniões', 'Keola Coffee', 'Área Externa', 'Online', 'A definir'];
@@ -19,6 +19,10 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   const [generalRanking, setGeneralRanking] = useState([]); // ranking geral de leitura (todos os usuários)
   const [selectedGroupDetail, setSelectedGroupDetail] = useState(null); // grupo aberto para detalhe
   const [loadingGroupDetail, setLoadingGroupDetail] = useState(false);
+  const [readingPlans, setReadingPlans] = useState([]);
+  const [editingPlan, setEditingPlan] = useState(null); // { id, year, label, spotifyUrl, daysText }
+  const [loadingPlanDetail, setLoadingPlanDetail] = useState(false);
+  const [savingPlan, setSavingPlan] = useState(false);
   const [announcements, setAnnouncements] = useState([]);
   const [publications, setPublications] = useState([]);
   const [areas, setAreas] = useState([]);
@@ -174,6 +178,58 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
     })();
   }, [activeTab]);
 
+  // Planos Bíblicos por ano (Admin > Plano Bíblico)
+  useEffect(() => {
+    if (activeTab !== 'plano_biblico') return;
+    loadReadingPlans();
+  }, [activeTab]);
+
+  const loadReadingPlans = async () => {
+    try {
+      const res = await apiFetch('/api/reading-plans');
+      if (res.ok) setReadingPlans(await res.json());
+    } catch { /* offline */ }
+  };
+
+  const openPlanEditor = async (id) => {
+    if (!id) { setEditingPlan({ id: null, year: new Date().getFullYear(), label: '', spotifyUrl: '', daysText: '' }); return; }
+    setLoadingPlanDetail(true);
+    try {
+      const res = await apiFetch(`/api/reading-plans/${id}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) setEditingPlan({ id: data.id, year: data.year, label: data.label, spotifyUrl: data.spotifyUrl || '', daysText: (data.days || []).join('\n') });
+      else showNotification(data.error || 'Não foi possível carregar o plano.');
+    } catch { showNotification('Falha de rede ao carregar o plano.'); }
+    finally { setLoadingPlanDetail(false); }
+  };
+
+  const handleSavePlan = async (e) => {
+    e.preventDefault();
+    if (!editingPlan) return;
+    const days = editingPlan.daysText.split('\n').map(d => d.trim()).filter(Boolean);
+    if (days.length === 0) return showNotification('Informe ao menos um dia de leitura.');
+    const body = { year: Number(editingPlan.year), label: editingPlan.label.trim(), spotifyUrl: editingPlan.spotifyUrl.trim() || null, days };
+    setSavingPlan(true);
+    try {
+      const res = await apiFetch(editingPlan.id ? `/api/reading-plans/${editingPlan.id}` : '/api/reading-plans', { method: editingPlan.id ? 'PUT' : 'POST', body });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        showNotification('Plano Bíblico salvo!');
+        setEditingPlan(null);
+        loadReadingPlans();
+      } else showNotification(data.error || 'Falha ao salvar o plano.');
+    } catch { showNotification('Falha de rede ao salvar.'); }
+    finally { setSavingPlan(false); }
+  };
+
+  const handleDeletePlan = async (id) => {
+    try {
+      const res = await apiFetch(`/api/reading-plans/${id}`, { method: 'DELETE' });
+      if (res.ok) { setReadingPlans(prev => prev.filter(p => p.id !== id)); showNotification('Plano removido.'); }
+      else showNotification('Falha ao remover o plano.');
+    } catch { showNotification('Falha de rede.'); }
+  };
+
   const openGroupDetail = async (groupId) => {
     setLoadingGroupDetail(true);
     setSelectedGroupDetail({ id: groupId });
@@ -201,6 +257,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
       if (type === 'areas') setAreas(areas.filter(i => i.id !== id));
       if (type === 'products') setProducts(products.filter(i => i.id !== id));
       if (type === 'point-rules') setPointRules(pointRules.filter(i => i.id !== id));
+      if (type === 'reading-plans') setReadingPlans(readingPlans.filter(i => i.id !== id));
       showNotification("Removido com sucesso.");
     } catch (e) {
       if (type === 'links') setLinks(links.filter(i => i.id !== id));
@@ -210,6 +267,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
       if (type === 'areas') setAreas(areas.filter(i => i.id !== id));
       if (type === 'products') setProducts(products.filter(i => i.id !== id));
       if (type === 'point-rules') setPointRules(pointRules.filter(i => i.id !== id));
+      if (type === 'reading-plans') setReadingPlans(readingPlans.filter(i => i.id !== id));
       showNotification("Removido (Offline).");
     } finally {
       setDeleteConfirm({ isOpen: false, type: '', id: null, title: '' });
@@ -481,6 +539,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
         <button onClick={() => setActiveTab('loja')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'loja' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Gift className="w-4 h-4"/> Loja</button>
         <button onClick={() => setActiveTab('gamificacao')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'gamificacao' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Zap className="w-4 h-4"/> Gamificação</button>
         <button onClick={() => setActiveTab('grupos')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'grupos' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><BookOpen className="w-4 h-4"/> Grupos</button>
+        <button onClick={() => setActiveTab('plano_biblico')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'plano_biblico' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><BookMarked className="w-4 h-4"/> Plano Bíblico</button>
         <button onClick={() => setActiveTab('membros')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'membros' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Users className="w-4 h-4"/> Membros</button>
         {user.role === 'ADMIN' && <button onClick={() => setActiveTab('cargos')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'cargos' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><ShieldCheck className="w-4 h-4"/> Cargos</button>}
         <button onClick={() => setActiveTab('bugs')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'bugs' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Bug className="w-4 h-4"/> Bugs</button>
@@ -933,6 +992,91 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                           )}
                         </div>
                       </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* ─── PLANO BÍBLICO (por ano) ─── */}
+          {activeTab === 'plano_biblico' && (
+            <div className="space-y-4">
+              <div className="flex justify-between items-center">
+                <div>
+                  <h3 className="text-lg font-bold text-text-primary">Planos de Leitura Bíblica</h3>
+                  <p className="text-xs text-text-muted mt-1">O plano usado no app é o do ano corrente. Cadastre o de cada ano com antecedência.</p>
+                </div>
+                <button onClick={() => openPlanEditor(null)} className="bg-brand-primary text-white px-4 py-2 rounded-md font-bold text-sm flex gap-2 items-center outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                  <Plus className="w-4 h-4"/> Novo Plano
+                </button>
+              </div>
+
+              {readingPlans.length === 0 ? (
+                <div className="text-center text-text-muted py-8 bg-surface-card rounded-default border border-dashed border-white/10">Nenhum plano cadastrado ainda.</div>
+              ) : (
+                <div className="grid gap-3">
+                  {readingPlans.map(p => {
+                    const isActiveYear = p.year === new Date().getFullYear();
+                    return (
+                      <div key={p.id} className={`bg-surface-card border p-4 rounded-default flex justify-between items-center ${isActiveYear ? 'border-brand-primary/40' : 'border-white/5'}`}>
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <span className="font-bold text-white text-lg">{p.label}</span>
+                            <span className="text-[9px] px-1.5 py-0.5 rounded-sm uppercase font-bold bg-brand-primary/20 text-brand-primary">{p.year}</span>
+                            {isActiveYear && <span className="text-[9px] px-1.5 py-0.5 rounded-sm uppercase font-bold bg-emerald-500/20 text-emerald-400">Em uso</span>}
+                          </div>
+                          <div className="text-sm text-text-muted flex items-center gap-2 mt-1">
+                            {p.dayCount} dias cadastrados
+                            {p.spotifyUrl && <span className="flex items-center gap-1 text-emerald-400"><Music className="w-3.5 h-3.5"/> Spotify vinculado</span>}
+                          </div>
+                        </div>
+                        <div className="flex gap-2">
+                          <button onClick={() => openPlanEditor(p.id)} className="p-2 hover:bg-white/10 rounded-md text-brand-primary" title="Editar"><Edit3 className="w-5 h-5"/></button>
+                          <button onClick={() => setDeleteConfirm({ isOpen: true, type: 'reading-plans', id: p.id, title: 'Excluir Plano Bíblico' })} className="p-2 hover:bg-red-500/20 text-text-muted hover:text-red-400 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Trash2 className="w-5 h-5"/></button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {editingPlan && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-200" onClick={() => !savingPlan && setEditingPlan(null)}>
+                  <div className="bg-surface-card border border-white/10 rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+                    <div className="flex justify-between items-center mb-4">
+                      <h3 className="text-lg font-bold text-text-primary">{editingPlan.id ? 'Editar Plano' : 'Novo Plano'}</h3>
+                      <button onClick={() => setEditingPlan(null)} className="p-1.5 text-text-muted hover:text-white outline-none"><X className="w-5 h-5"/></button>
+                    </div>
+                    {loadingPlanDetail ? (
+                      <div className="flex justify-center py-8"><div className="w-6 h-6 border-2 border-brand-primary border-t-transparent rounded-full animate-spin"></div></div>
+                    ) : (
+                      <form onSubmit={handleSavePlan} className="space-y-4">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-xs text-text-muted mb-1 block">Ano</label>
+                            <input required type="number" min="2000" max="2100" value={editingPlan.year} onChange={e => setEditingPlan({ ...editingPlan, year: e.target.value })} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"/>
+                          </div>
+                          <div>
+                            <label className="text-xs text-text-muted mb-1 block">Nome do plano</label>
+                            <input required type="text" placeholder="Plano Bíblico 2027" value={editingPlan.label} onChange={e => setEditingPlan({ ...editingPlan, label: e.target.value })} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"/>
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-xs text-text-muted mb-1 flex items-center gap-1.5"><Music className="w-3.5 h-3.5"/> Link do plano no Spotify (opcional)</label>
+                          <input type="url" placeholder="https://open.spotify.com/..." value={editingPlan.spotifyUrl} onChange={e => setEditingPlan({ ...editingPlan, spotifyUrl: e.target.value })} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"/>
+                        </div>
+                        <div>
+                          <label className="text-xs text-text-muted mb-1 flex items-center justify-between">
+                            <span>Leituras — uma por linha (linha 1 = dia 1, linha 2 = dia 2...)</span>
+                            <span className="text-brand-primary font-semibold">{editingPlan.daysText.split('\n').filter(l => l.trim()).length} dias</span>
+                          </label>
+                          <textarea required rows={12} value={editingPlan.daysText} onChange={e => setEditingPlan({ ...editingPlan, daysText: e.target.value })} placeholder={'Gênesis 1-3\nGênesis 4-6\nGênesis 7-9\n...'} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm font-mono outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 resize-y"/>
+                        </div>
+                        <button type="submit" disabled={savingPlan} className="w-full bg-brand-primary text-white py-2.5 rounded-md font-bold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 disabled:opacity-50 flex items-center justify-center gap-2">
+                          {savingPlan ? <Loader2 className="w-4 h-4 animate-spin"/> : <Save className="w-4 h-4"/>} Salvar Plano
+                        </button>
+                      </form>
                     )}
                   </div>
                 </div>

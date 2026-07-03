@@ -9,7 +9,7 @@ import { randomBytes } from 'crypto';
 import rateLimit from 'express-rate-limit';
 import { readFileSync } from 'fs';
 import { join } from 'path';
-import { READING_PLAN } from './readingPlan';
+import { READING_PLAN as STATIC_READING_PLAN } from './readingPlan';
 
 // Bíblia completa (Almeida Corrigida Fiel) carregada em memória para leitura no app
 const BIBLE = JSON.parse(readFileSync(join(__dirname, '../data/biblia_acf.json'), 'utf-8')) as { name: string; chapters: string[][] }[];
@@ -220,12 +220,36 @@ const shiftSchema = z.object({ date: z.string().min(1), volunteerId: z.string().
 // Marcos de sequência do plano bíblico (dias acumulados de leitura)
 const READING_MILESTONES = [10, 20, 30, 45, 60];
 
+// ─── Plano de Leitura Bíblica: editável por ano (Admin > Plano Bíblico) ───────────────────
+// Cache em memória (recarregado ao salvar/excluir um plano) — evita ida ao banco a cada request.
+type ReadingPlanCacheEntry = { label: string; days: string[]; spotifyUrl: string | null };
+let readingPlanCache: Record<number, ReadingPlanCacheEntry> = {};
+const loadReadingPlanCache = async () => {
+  const rows = await prisma.readingPlan.findMany();
+  readingPlanCache = Object.fromEntries(rows.map(r => [r.year, { label: r.label, days: r.days as unknown as string[], spotifyUrl: r.spotifyUrl }]));
+};
+// Garante que exista um plano para o ano corrente do dataset estático embutido (primeira execução)
+const ensureDefaultReadingPlan = async () => {
+  const year = new Date().getFullYear();
+  const existing = await prisma.readingPlan.findFirst();
+  if (!existing) {
+    await prisma.readingPlan.create({ data: { year, label: `Plano Bíblico ${year}`, days: STATIC_READING_PLAN, spotifyUrl: null } });
+  }
+  await loadReadingPlanCache();
+};
+
+const getActivePlan = (): ReadingPlanCacheEntry => {
+  const year = new Date().getFullYear();
+  return readingPlanCache[year] || { label: `Plano Bíblico ${year}`, days: STATIC_READING_PLAN, spotifyUrl: null };
+};
+const getPlanDays = () => getActivePlan().days;
+
 // Dia do plano com base na data atual (dia do ano, 1..365)
 const currentPlanDay = () => {
   const now = new Date();
   const start = new Date(now.getFullYear(), 0, 1);
   const day = Math.floor((now.getTime() - start.getTime()) / 86400000) + 1;
-  return Math.min(Math.max(day, 1), READING_PLAN.length);
+  return Math.min(Math.max(day, 1), getPlanDays().length);
 };
 
 // Ordem canônica dos 66 livros (alinhada ao dataset local e ao READING_PLAN)
@@ -981,7 +1005,7 @@ app.get('/api/reading/me', h(async (req, res) => {
   if (!todayDone) {
     const refId = `reminder-${day}`;
     const exists = await prisma.notification.findFirst({ where: { userId: req.user!.id, refId } });
-    if (!exists) notify(req.user!.id, 'REMINDER', 'Leitura de hoje pendente 📖', `Não esqueça: ${READING_PLAN[day - 1] || 'a leitura de hoje'}. Marque como lida e mantenha o fogo aceso! 🔥`, refId, 'membros:reading');
+    if (!exists) notify(req.user!.id, 'REMINDER', 'Leitura de hoje pendente 📖', `Não esqueça: ${getPlanDays()[day - 1] || 'a leitura de hoje'}. Marque como lida e mantenha o fogo aceso! 🔥`, refId, 'membros:reading');
   }
 
   const [pointsWithPhoto, pointsNoPhoto, memberships] = await Promise.all([
@@ -990,16 +1014,19 @@ app.get('/api/reading/me', h(async (req, res) => {
     prisma.groupMember.findMany({ where: { userId: req.user!.id, status: 'ATIVO' }, include: { group: { select: { id: true, name: true } } } }),
   ]);
 
+  const activePlan = getActivePlan();
   res.json({
     count: logs.length,
     todayDay: day,
-    todayReference: READING_PLAN[day - 1] || null,
+    todayReference: activePlan.days[day - 1] || null,
     todayDone,
     milestones: READING_MILESTONES,
     pointsWithPhoto,
     pointsNoPhoto,
     groups: memberships.map(m => m.group),
     logs,
+    planLabel: activePlan.label,
+    spotifyUrl: activePlan.spotifyUrl,
   });
 }));
 
@@ -1020,10 +1047,46 @@ app.get('/api/reading/ranking', h(async (req, res) => {
   res.json(ranking);
 }));
 
+// --- ADMIN: PLANOS DE LEITURA POR ANO (Admin > Plano Bíblico) ---
+app.get('/api/reading-plans', requirePerm('READING_PLAN_MANAGE'), h(async (req, res) => {
+  const rows = await prisma.readingPlan.findMany({ orderBy: { year: 'asc' } });
+  res.json(rows.map(r => ({ id: r.id, year: r.year, label: r.label, spotifyUrl: r.spotifyUrl, dayCount: (r.days as unknown as string[]).length })));
+}));
+app.get('/api/reading-plans/:id', requirePerm('READING_PLAN_MANAGE'), h(async (req, res) => {
+  const r = await prisma.readingPlan.findUnique({ where: { id: pid(req) } });
+  if (!r) return res.status(404).json({ error: 'Plano não encontrado.' });
+  res.json(r);
+}));
+const readingPlanSchema = z.object({
+  year: z.number().int().min(2000).max(2100),
+  label: z.string().min(1).max(120),
+  days: z.array(z.string().max(200)).min(1).max(400),
+  spotifyUrl: z.string().url().optional().nullable(),
+});
+app.post('/api/reading-plans', requirePerm('READING_PLAN_MANAGE'), validate(readingPlanSchema), h(async (req, res) => {
+  try {
+    const created = await prisma.readingPlan.create({ data: req.body });
+    await loadReadingPlanCache();
+    res.status(201).json(created);
+  } catch { res.status(409).json({ error: 'Já existe um plano cadastrado para esse ano.' }); }
+}));
+app.put('/api/reading-plans/:id', requirePerm('READING_PLAN_MANAGE'), validate(readingPlanSchema), h(async (req, res) => {
+  try {
+    const updated = await prisma.readingPlan.update({ where: { id: pid(req) }, data: req.body });
+    await loadReadingPlanCache();
+    res.json(updated);
+  } catch { res.status(409).json({ error: 'Já existe outro plano cadastrado para esse ano.' }); }
+}));
+app.delete('/api/reading-plans/:id', requirePerm('READING_PLAN_MANAGE'), h(async (req, res) => {
+  await prisma.readingPlan.delete({ where: { id: pid(req) } });
+  await loadReadingPlanCache();
+  res.json({ message: 'Removido' });
+}));
+
 // Texto da leitura do dia (para ler no app) — dataset local ACF, sem dependência externa
 app.get('/api/reading/text', h(async (req, res) => {
-  const day = req.query.day ? Math.min(Math.max(parseInt(String(req.query.day), 10) || 1, 1), READING_PLAN.length) : currentPlanDay();
-  const reference = READING_PLAN[day - 1];
+  const day = req.query.day ? Math.min(Math.max(parseInt(String(req.query.day), 10) || 1, 1), getPlanDays().length) : currentPlanDay();
+  const reference = getPlanDays()[day - 1];
   if (!reference) return res.status(404).json({ error: 'Leitura não encontrada.' });
 
   const parsed = parseRef(reference);
@@ -1042,7 +1105,7 @@ app.get('/api/reading/text', h(async (req, res) => {
 // Marcar leitura do dia (foto opcional; sem foto = menos pontos) — credita e checa marcos
 app.post('/api/reading/check', validate(readingCheckSchema), h(async (req, res) => {
   const day = currentPlanDay();
-  const reference = READING_PLAN[day - 1] || `Dia ${day}`;
+  const reference = getPlanDays()[day - 1] || `Dia ${day}`;
   const hasPhoto = typeof req.body.photoUrl === 'string' && req.body.photoUrl.trim().length > 0;
 
   // À prova de corrida: confia na constraint única (userId, day) em vez de pré-checar.
@@ -1325,5 +1388,7 @@ app.use((err: Error & { status?: number }, _req: Request, res: Response, _next: 
   if (err.status) return res.status(err.status).json({ error: err.message });
   res.status(500).json({ error: 'Erro interno do servidor.' });
 });
+
+ensureDefaultReadingPlan().catch(err => console.error('Falha ao preparar o Plano Bíblico padrão:', err));
 
 app.listen(port, () => console.log(`✅ Servidor Zion ativo na porta ${port}`));
