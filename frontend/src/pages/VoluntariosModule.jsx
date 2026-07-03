@@ -1,13 +1,15 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { apiFetch } from '../api';
 import Avatar from '../components/Avatar';
 import { getAreaIconComponent } from '../utils/areaIcons';
 import { getEventOccurrences } from '../utils/eventOccurrences';
+import { extractCheckinCode } from '../utils/qrCheckin';
+const QrScanner = lazy(() => import('../components/QrScanner'));
 import {
   CalendarDays, Smile, Megaphone, Briefcase, Clock,
   CheckCircle, GraduationCap, Users, MessageSquare, ShieldCheck,
   Award, Gift, X, BookOpen, Trash2, AlertTriangle, Heart,
-  Send, Pin, BarChart3, Plus, Loader2, Eye
+  Send, Pin, BarChart3, Plus, Loader2, Eye, Camera
 } from 'lucide-react';
 
 // Categorias e emojis do mural da área (mesma lógica do mural de Links)
@@ -75,6 +77,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   const [checkinEvent,     setCheckinEvent]     = useState(null); // ocorrência em check-in
   const [checkinCode,      setCheckinCode]      = useState('');
   const [checkingInEvent,  setCheckingInEvent]  = useState(false);
+  const [showQrScanner,    setShowQrScanner]    = useState(false);
   const [scheduleEventId,  setScheduleEventId]  = useState({}); // { areaId: eventId }
   const [availableForEvent,setAvailableForEvent]= useState({}); // { areaId: [userId] }
   const [isLoading,        setIsLoading]        = useState(true);
@@ -434,11 +437,12 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   };
 
   // Check-in real no evento de Voluntário (via código exibido no local) — credita os pontos
-  const handleEventCheckin = async () => {
-    if (!checkinCode.trim() || !checkinEvent) return;
+  const handleEventCheckin = async (codeOverride) => {
+    const code = (codeOverride || checkinCode).trim();
+    if (!code || !checkinEvent) return;
     setCheckingInEvent(true);
     try {
-      const res = await apiFetch(`/api/events/${checkinEvent.id}/checkin`, { method: 'POST', body: { code: checkinCode.trim(), refId: checkinEvent.occId } });
+      const res = await apiFetch(`/api/events/${checkinEvent.id}/checkin`, { method: 'POST', body: { code, refId: checkinEvent.occId } });
       const data = await res.json().catch(() => ({}));
       if (res.ok) {
         setEventRsvps(prev => prev.includes(checkinEvent.occId) ? prev : [...prev, checkinEvent.occId]);
@@ -1307,13 +1311,31 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
               <h3 className="text-lg font-bold text-text-primary flex items-center gap-2"><CheckCircle className="w-5 h-5 text-brand-primary"/> Check-in</h3>
               <button onClick={() => setCheckinEvent(null)} aria-label="Fechar" className="text-text-muted hover:text-white outline-none"><X className="w-5 h-5"/></button>
             </div>
-            <p className="text-sm text-text-muted mb-4"><span className="text-white font-semibold">{checkinEvent.title}</span> — digite o código exibido no local para confirmar sua presença e ganhar seus pontos.</p>
+            <p className="text-sm text-text-muted mb-4"><span className="text-white font-semibold">{checkinEvent.title}</span> — escaneie o QR Code do evento ou digite o código exibido no local para ganhar seus pontos.</p>
+            <button onClick={() => setShowQrScanner(true)} className="w-full bg-surface-dark border border-brand-primary/30 text-brand-primary py-2.5 rounded-default font-semibold flex items-center justify-center gap-2 mb-3 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-brand-primary/10 transition-colors">
+              <Camera className="w-4 h-4"/> Escanear QR Code
+            </button>
+            <div className="flex items-center gap-2 mb-3"><div className="flex-1 h-px bg-white/10"/><span className="text-xs text-text-muted">ou</span><div className="flex-1 h-px bg-white/10"/></div>
             <input value={checkinCode} onChange={e => setCheckinCode(e.target.value.toUpperCase())} placeholder="Código (ex: ZION01)" className="w-full bg-surface-dark border border-white/10 rounded-md px-4 py-2.5 text-white font-mono text-center tracking-widest outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 focus:border-brand-primary mb-4" />
-            <button onClick={handleEventCheckin} disabled={!checkinCode.trim() || checkingInEvent} className="w-full bg-brand-primary hover:bg-brand-secondary text-white py-2.5 rounded-default font-bold flex items-center justify-center gap-2 disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 transition-colors">
+            <button onClick={() => handleEventCheckin()} disabled={!checkinCode.trim() || checkingInEvent} className="w-full bg-brand-primary hover:bg-brand-secondary text-white py-2.5 rounded-default font-bold flex items-center justify-center gap-2 disabled:opacity-50 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 transition-colors">
               {checkingInEvent ? <Loader2 className="w-4 h-4 animate-spin"/> : <CheckCircle className="w-4 h-4"/>} Confirmar presença
             </button>
           </div>
         </div>
+      )}
+
+      {showQrScanner && (
+        <Suspense fallback={null}>
+          <QrScanner
+            onClose={() => setShowQrScanner(false)}
+            onResult={(raw) => {
+              const code = extractCheckinCode(raw);
+              setCheckinCode(code);
+              setShowQrScanner(false);
+              handleEventCheckin(code);
+            }}
+          />
+        </Suspense>
       )}
 
       {/* ── MODAL DE CONFIRMAÇÃO DE CANCELAMENTO DE ÁREA (sem window.confirm) */}
