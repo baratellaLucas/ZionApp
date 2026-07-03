@@ -319,6 +319,13 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
         </div>
       </div>
 
+      {futureEvents.some(o => o.isNow) && (
+        <div className="flex items-center gap-2 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 rounded-default px-4 py-2.5 text-sm font-bold animate-pulse">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0"></span>
+          Acontecendo agora: {futureEvents.filter(o => o.isNow).map(o => o.title).join(', ')}
+        </div>
+      )}
+
       <div className="bg-surface-card p-4 rounded-default border border-white/5 shadow-level-2">
         <div className="flex justify-between items-center mb-4">
           <button onClick={() => setCalendarDate(new Date(currentYear, currentMonth - 1, 1))} className="p-1 rounded-md text-text-muted hover:text-white hover:bg-white/5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><ChevronLeft className="w-4 h-4" /></button>
@@ -355,12 +362,6 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
 
       <div>
         <h3 className="text-lg font-display font-bold mb-4 flex items-center gap-2 text-text-primary">Próximos Eventos</h3>
-        {futureEvents.some(o => o.isNow) && (
-          <div className="mb-3 flex items-center gap-2 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 rounded-default px-4 py-2.5 text-sm font-bold animate-pulse">
-            <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0"></span>
-            Acontecendo agora: {futureEvents.filter(o => o.isNow).map(o => o.title).join(', ')}
-          </div>
-        )}
         <div className="space-y-3">
           {isLoading ? (
             <div className="flex justify-center py-5"><div className="w-6 h-6 border-2 border-brand-primary border-t-transparent rounded-full animate-spin"></div></div>
