@@ -1,6 +1,8 @@
-import React, { useState, useEffect } from 'react';
-import { Gift, Award, Ticket, Tag, Check, X, Loader2, Copy, ShoppingBag, QrCode } from 'lucide-react';
+import React, { useState, useEffect, Suspense, lazy } from 'react';
+import { Gift, Award, Ticket, Tag, Check, X, Loader2, Copy, ShoppingBag, QrCode, Camera, ShieldCheck, AlertTriangle } from 'lucide-react';
 import { apiFetch } from '../api';
+import { extractVoucherCode } from '../utils/qrCheckin';
+const QrScanner = lazy(() => import('../components/QrScanner'));
 
 // URL que o QR do voucher codifica — o atendente escaneia e o app valida/consome automaticamente
 const voucherQrUrl = (code) => `https://api.qrserver.com/v1/create-qr-code/?size=220x220&data=${encodeURIComponent(`${window.location.origin}/?voucher=${code}`)}`;
@@ -13,6 +15,12 @@ const RewardsModule = ({ user, setUser, showNotification }) => {
   const [voucher, setVoucher] = useState(null); // resgate recém-criado (modal)
   const [qrVoucher, setQrVoucher] = useState(null); // voucher exibido como QR para o atendente
   const [redeeming, setRedeeming] = useState(false);
+  // Validação de vouchers (atendente: staff ou flag canRedeem)
+  const [manualVoucherCode, setManualVoucherCode] = useState('');
+  const [validatingVoucher, setValidatingVoucher] = useState(false);
+  const [voucherValidation, setVoucherValidation] = useState(null); // { consumed, already, error, redemption }
+  const [showVoucherScanner, setShowVoucherScanner] = useState(false);
+  const isAttendant = !!user?.canRedeem || ['ADMIN', 'PASTOR'].includes(user?.role);
 
   const loadData = async () => {
     try {
@@ -57,6 +65,29 @@ const RewardsModule = ({ user, setUser, showNotification }) => {
     navigator.clipboard?.writeText(code).then(() => showNotification('Código copiado!')).catch(() => {});
   };
 
+  // Atendente: valida + dá baixa no voucher em uma única etapa (idempotente)
+  const handleValidateVoucher = async (codeOverride) => {
+    const code = (codeOverride || manualVoucherCode).trim().toUpperCase();
+    if (!code) return;
+    setValidatingVoucher(true);
+    setVoucherValidation(null);
+    try {
+      const res = await apiFetch('/api/redemptions/consume', { method: 'POST', body: { code } });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setVoucherValidation(data);
+        setManualVoucherCode('');
+        showNotification(data.already ? 'Voucher já havia sido utilizado.' : `Voucher validado: ${data.redemption?.productName || code} 🎉`);
+      } else {
+        setVoucherValidation({ error: data.error || 'Voucher inválido.' });
+        showNotification(data.error || 'Voucher inválido.');
+      }
+    } catch {
+      setVoucherValidation({ error: 'Falha de rede ao validar.' });
+      showNotification('Falha de rede ao validar.');
+    } finally { setValidatingVoucher(false); }
+  };
+
   return (
     <div className="space-y-6">
       <div className="bg-gradient-to-br from-brand-secondary to-brand-primary p-6 rounded-default shadow-level-2 text-white relative overflow-hidden">
@@ -71,6 +102,34 @@ const RewardsModule = ({ user, setUser, showNotification }) => {
           </div>
         </div>
       </div>
+
+      {isAttendant && (
+        <div className="bg-surface-card border border-emerald-500/20 rounded-default p-5 shadow-level-2">
+          <h3 className="text-base font-bold text-text-primary flex items-center gap-2 mb-1"><ShieldCheck className="w-5 h-5 text-emerald-400" /> Validar Voucher (Atendente)</h3>
+          <p className="text-xs text-text-muted mb-4">Escaneie o QR do voucher do membro ou digite o código para validar e dar baixa na hora.</p>
+          <button onClick={() => setShowVoucherScanner(true)} className="w-full bg-surface-dark border border-emerald-500/30 text-emerald-300 py-2.5 rounded-default font-semibold flex items-center justify-center gap-2 mb-3 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-emerald-500/10 transition-colors">
+            <Camera className="w-4 h-4" /> Escanear QR Code
+          </button>
+          <div className="flex items-center gap-2 mb-3"><div className="flex-1 h-px bg-white/10" /><span className="text-xs text-text-muted">ou</span><div className="flex-1 h-px bg-white/10" /></div>
+          <div className="flex gap-2">
+            <input value={manualVoucherCode} onChange={e => setManualVoucherCode(e.target.value.toUpperCase())} placeholder="ZION-XXXXXXXX" className="flex-1 bg-surface-dark border border-white/10 rounded-md px-3 py-2.5 text-white font-mono uppercase outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 focus:border-brand-primary" />
+            <button onClick={() => handleValidateVoucher()} disabled={!manualVoucherCode.trim() || validatingVoucher} className="bg-emerald-600 hover:bg-emerald-500 text-white px-5 rounded-md font-bold text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 disabled:opacity-40 flex items-center gap-2">
+              {validatingVoucher ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Validar'}
+            </button>
+          </div>
+          {voucherValidation && (
+            <div className={`mt-3 p-3 rounded-md border text-sm flex items-start gap-2 ${voucherValidation.error ? 'bg-red-500/10 border-red-500/30 text-red-400' : voucherValidation.already ? 'bg-amber-500/10 border-amber-500/30 text-amber-300' : 'bg-emerald-500/10 border-emerald-500/30 text-emerald-300'}`}>
+              {voucherValidation.error ? <X className="w-4 h-4 shrink-0 mt-0.5" /> : voucherValidation.already ? <AlertTriangle className="w-4 h-4 shrink-0 mt-0.5" /> : <Check className="w-4 h-4 shrink-0 mt-0.5" />}
+              <div>
+                {voucherValidation.error ? voucherValidation.error : voucherValidation.already ? 'Este voucher já havia sido utilizado.' : 'Voucher validado com sucesso!'}
+                {voucherValidation.redemption && (
+                  <div className="text-xs opacity-80 mt-0.5">{voucherValidation.redemption.productName} • {voucherValidation.redemption.user?.name}</div>
+                )}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
 
       {isLoading ? (
         <div className="flex justify-center py-10"><div className="w-8 h-8 border-4 border-brand-primary border-t-transparent rounded-full animate-spin"></div></div>
@@ -188,6 +247,19 @@ const RewardsModule = ({ user, setUser, showNotification }) => {
             </button>
           </div>
         </div>
+      )}
+
+      {showVoucherScanner && (
+        <Suspense fallback={null}>
+          <QrScanner
+            onClose={() => setShowVoucherScanner(false)}
+            onResult={(raw) => {
+              const code = extractVoucherCode(raw);
+              setShowVoucherScanner(false);
+              handleValidateVoucher(code);
+            }}
+          />
+        </Suspense>
       )}
     </div>
   );
