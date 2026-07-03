@@ -36,6 +36,13 @@ const DEFAULT_AREA_STYLE = { Icon: Briefcase, color: 'text-brand-primary', bg: '
 
 const MAX_AREAS_PER_PERSON = 2;
 
+// Horários pré-definidos (de 30 em 30 min) para a criação de escala — evita digitação livre de hora
+const SHIFT_TIME_OPTIONS = Array.from({ length: 48 }, (_, i) => {
+  const h = String(Math.floor(i / 2)).padStart(2, '0');
+  const m = i % 2 === 0 ? '00' : '30';
+  return `${h}:${m}`;
+});
+
 // Admin/Pastor ou quem recebeu acesso administrativo de Voluntários (Admin > Membros) vê/gerencia
 // qualquer área sem precisar participar dela.
 const isAreaStaff = (u) => u?.role === 'ADMIN' || u?.role === 'PASTOR' || !!u?.canManageAreas;
@@ -55,6 +62,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   const [shifts,           setShifts]           = useState([]);
   const [announcements,    setAnnouncements]    = useState([]);
   const [areaRequests,     setAreaRequests]     = useState({}); // { areaId: [participações PENDENTE] }
+  const [areaLeaveRequests,setAreaLeaveRequests]= useState({}); // { areaId: [participações SAIDA_PENDENTE] }
   const [areaApproved,     setAreaApproved]     = useState({}); // { areaId: [membros aprovados] }
   const [areaShifts,       setAreaShifts]       = useState({}); // { areaId: [escalas] }
   const [shiftDrafts,      setShiftDrafts]      = useState({}); // { areaId: { date, volunteerId, positionId } }
@@ -265,7 +273,8 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
       if (resP && resP.ok) {
         const parts = await resP.json();
         setAreaRequests(prev => ({ ...prev, [areaId]: parts.filter(p => p.status === 'PENDENTE') }));
-        setAreaApproved(prev => ({ ...prev, [areaId]: parts.filter(p => p.status === 'APROVADO').map(p => p.user).filter(Boolean) }));
+        setAreaLeaveRequests(prev => ({ ...prev, [areaId]: parts.filter(p => p.status === 'SAIDA_PENDENTE') }));
+        setAreaApproved(prev => ({ ...prev, [areaId]: parts.filter(p => p.status === 'APROVADO' || p.status === 'SAIDA_PENDENTE').map(p => p.user).filter(Boolean) }));
       }
       if (resS && resS.ok) { const s = await resS.json(); setAreaShifts(prev => ({ ...prev, [areaId]: s })); }
     } catch { /* ignora */ }
@@ -289,13 +298,29 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     }
   };
 
+  // Aprovar (confirma saída) / recusar (mantém na equipe) um pedido de saída da área
+  const handleLeaveRequest = async (participationId, areaId, userId, approveLeave) => {
+    try {
+      const res = await apiFetch(`/api/areas/participations/${participationId}`, { method: 'PATCH', body: { status: approveLeave ? 'APROVADO' : 'RECUSADO' } });
+      if (res.ok) {
+        showNotification(approveLeave ? 'Saída confirmada.' : 'Pedido de saída recusado — voluntário mantido na equipe.');
+        setAreaLeaveRequests(prev => ({ ...prev, [areaId]: (prev[areaId] || []).filter(p => p.id !== participationId) }));
+        if (approveLeave) setAreaApproved(prev => ({ ...prev, [areaId]: (prev[areaId] || []).filter(u => u.id !== userId) }));
+      } else throw new Error();
+    } catch {
+      showNotification('Falha ao processar o pedido de saída.');
+    }
+  };
+
   const setDraft = (areaId, patch) => setShiftDrafts(prev => ({ ...prev, [areaId]: { ...(prev[areaId] || {}), ...patch } }));
   const handleCreateShift = async (areaId) => {
     const d = shiftDrafts[areaId] || {};
-    if (!d.date) return showNotification('Informe a data da escala.');
+    if (!d.dateOnly || !d.timeOnly) return showNotification('Informe a data e o horário da escala.');
+    const when = new Date(`${d.dateOnly}T${d.timeOnly}`);
+    if (isNaN(when.getTime())) return showNotification('Data/horário inválidos.');
     try {
-      const res = await apiFetch(`/api/areas/${areaId}/shifts`, { method: 'POST', body: { date: new Date(d.date).toISOString(), volunteerId: d.volunteerId || null, positionId: d.positionId || null } });
-      if (res.ok) { setShiftDrafts(prev => ({ ...prev, [areaId]: { date: '', volunteerId: '', positionId: '' } })); loadLeaderArea(areaId); showNotification('Escala criada!'); }
+      const res = await apiFetch(`/api/areas/${areaId}/shifts`, { method: 'POST', body: { date: when.toISOString(), volunteerId: d.volunteerId || null, positionId: d.positionId || null } });
+      if (res.ok) { setShiftDrafts(prev => ({ ...prev, [areaId]: { dateOnly: '', timeOnly: '', volunteerId: '', positionId: '' } })); loadLeaderArea(areaId); showNotification('Escala criada!'); }
       else { const e = await res.json().catch(() => ({})); showNotification(e.error || 'Falha ao criar escala.'); }
     } catch { showNotification('Falha de rede.'); }
   };
@@ -320,6 +345,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   const activeAreaDetails = selectedAreaId ? areas.find(a => a.id === selectedAreaId) : null;
   const activeAreaStyle   = activeAreaDetails ? styleForAreaId(activeAreaDetails.id) : DEFAULT_AREA_STYLE;
   const AreaIcon          = activeAreaStyle.Icon;
+  const isModalLeader     = !!activeAreaDetails && (activeAreaDetails.leaderId === user?.id || isAreaStaff(user));
 
   const activeAreaCount   = myAreas.filter(p => p.status === 'PENDENTE' || p.status === 'APROVADO').length;
   const reachedAreaLimit  = activeAreaCount >= MAX_AREAS_PER_PERSON;
@@ -333,6 +359,8 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   ];
 
   const futureShifts = shifts.filter(s => new Date(s.date) >= new Date());
+  const myFutureShifts = futureShifts.filter(s => s.volunteerId === user?.id);
+  const openFutureShifts = futureShifts.filter(s => !s.volunteerId);
 
   const formatData = (dateString) => {
     const date = new Date(dateString);
@@ -359,6 +387,18 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
       setShifts(prev => prev.map(s => s.id === shiftId ? { ...s, status: 'Confirmado' } : s));
       showNotification('Escala confirmada (Modo Offline)!');
     }
+  };
+
+  // Aceitar uma vaga em aberto — some da lista de "abertas" para todos assim que alguém aceita
+  const handleClaimShift = async (shiftId) => {
+    try {
+      const res = await apiFetch(`/api/shifts/${shiftId}/claim`, { method: 'PATCH' });
+      if (res.ok) {
+        const updated = await res.json();
+        setShifts(prev => prev.map(s => s.id === shiftId ? updated : s));
+        showNotification('Vaga aceita! Você está escalado.');
+      } else { const e = await res.json().catch(() => ({})); showNotification(e.error || 'Falha ao aceitar a vaga.'); }
+    } catch { showNotification('Falha de rede.'); }
   };
 
   // Solicitar entrada (PENDENTE) — persiste via POST /api/areas/:id/request
@@ -393,30 +433,76 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   // Abre modal de confirmação interno (sem window.confirm)
   const requestCancelArea = (participation) => setAreaToCancel(participation);
 
-  // Cancelar/sair — persiste via DELETE /api/areas/:id/request
+  // Cancelar solicitação pendente (remove) OU pedir saída de área aprovada (vira SAIDA_PENDENTE p/ o líder aprovar)
   const executeCancelArea = async () => {
     if (!areaToCancel) return;
     const participation = areaToCancel;
+    const isLeaving = participation.status === 'APROVADO';
     setAreaToCancel(null);
-    setMyAreas(prev => prev.filter(p => p.id !== participation.id));
+    if (isLeaving) {
+      setMyAreas(prev => prev.map(p => p.id === participation.id ? { ...p, status: 'SAIDA_PENDENTE', role: 'Pedido de saída enviado' } : p));
+    } else {
+      setMyAreas(prev => prev.filter(p => p.id !== participation.id));
+    }
     try {
-      await apiFetch(`/api/areas/${participation.areaId}/request`, {
-        method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user?.id })
-      });
-      showNotification('Solicitação cancelada.');
+      const res = await apiFetch(`/api/areas/${participation.areaId}/request`, { method: 'DELETE' });
+      showNotification(isLeaving ? 'Pedido de saída enviado! Aguarde a aprovação do líder.' : 'Solicitação cancelada.');
+      if (isLeaving && res.ok) {
+        const updated = await res.json().catch(() => null);
+        if (updated?.id) setMyAreas(prev => prev.map(p => p.id === participation.id ? { ...p, id: updated.id, status: updated.status } : p));
+      }
     } catch {
-      showNotification('Solicitação cancelada (Offline).');
+      showNotification(isLeaving ? 'Pedido de saída registrado (Offline).' : 'Solicitação cancelada (Offline).');
     }
   };
 
-  const openAreaModal = (areaId) => {
+  const openAreaModal = (areaId, tab = 'escalas') => {
     setSelectedAreaId(areaId);
-    setModalTab('escalas');
+    setModalTab(tab);
     setMuralMsgs([]);
     // Carrega a equipe real (membros aprovados) para a aba "Equipe"
     loadAreaTeam(areaId);
     loadMyAvailability(areaId);
     loadAreaPositions(areaId);
+    const areaObj = areas.find(a => a.id === areaId);
+    if (areaObj && (areaObj.leaderId === user?.id || isAreaStaff(user))) loadLeaderArea(areaId);
+  };
+
+  // Solicitações de entrada (PENDENTE) e saída (SAIDA_PENDENTE) — reaproveitado na tela e na aba Liderança
+  const renderMembershipRequests = (areaId) => {
+    const pending = areaRequests[areaId] || [];
+    const leaving = areaLeaveRequests[areaId] || [];
+    if (pending.length === 0 && leaving.length === 0) {
+      return <p className="text-xs text-text-muted italic">Não há solicitações pendentes no momento.</p>;
+    }
+    return (
+      <div className="space-y-2">
+        {pending.map(req => (
+          <div key={req.id} className="flex justify-between items-center bg-surface-card p-3 rounded-md border border-white/5">
+            <span className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+              <Avatar name={req.user?.name} src={req.user?.profileImage} size={28} /> {req.user?.name || 'Voluntário'}
+              <span className="text-[9px] bg-brand-primary/20 text-brand-primary px-1.5 py-0.5 rounded-full uppercase tracking-wider font-bold">Entrada</span>
+            </span>
+            <div className="flex gap-2">
+              <button onClick={() => handleApproveRejectArea(req.id, areaId, 'RECUSADO')} title="Recusar" className="p-2 rounded-md hover:bg-red-500/20 text-red-400 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-4 h-4"/></button>
+              <button onClick={() => handleApproveRejectArea(req.id, areaId, 'APROVADO')} title="Aprovar" className="p-2 rounded-md hover:bg-green-500/20 text-green-400 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><CheckCircle className="w-4 h-4"/></button>
+            </div>
+          </div>
+        ))}
+        {leaving.map(req => (
+          <div key={req.id} className="flex justify-between items-center bg-surface-card p-3 rounded-md border border-amber-500/20">
+            <span className="flex items-center gap-2 text-sm font-semibold text-text-primary">
+              <Avatar name={req.user?.name} src={req.user?.profileImage} size={28} /> {req.user?.name || 'Voluntário'}
+              <span className="text-[9px] bg-amber-500/20 text-amber-400 px-1.5 py-0.5 rounded-full uppercase tracking-wider font-bold">Pedido de Saída</span>
+            </span>
+            <div className="flex gap-2">
+              <button onClick={() => handleLeaveRequest(req.id, areaId, req.userId, false)} title="Manter na equipe" className="p-2 rounded-md hover:bg-red-500/20 text-red-400 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-4 h-4"/></button>
+              <button onClick={() => handleLeaveRequest(req.id, areaId, req.userId, true)} title="Confirmar saída" className="p-2 rounded-md hover:bg-green-500/20 text-green-400 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><CheckCircle className="w-4 h-4"/></button>
+            </div>
+          </div>
+        ))}
+      </div>
+    );
   };
 
   // ─── disponibilidade semanal (dia + período) ───────────────────────────────
@@ -612,9 +698,10 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                 const { Icon, color, bg } = styleForAreaId(myArea.areaId);
                 const isLeader = myArea.isLeader;
                 const isApproved = myArea.status === 'APROVADO';
+                const isLeavingArea = myArea.status === 'SAIDA_PENDENTE';
                 const pending = isLeader ? (areaRequests[areaDetails.id] || []) : [];
                 return (
-                  <div key={myArea.id} className={`bg-surface-card rounded-default border overflow-hidden shadow-level-2 ${(isApproved || isLeader) ? 'border-brand-primary/30' : 'border-white/5'}`}>
+                  <div key={myArea.id} className={`bg-surface-card rounded-default border overflow-hidden shadow-level-2 ${(isApproved || isLeavingArea || isLeader) ? 'border-brand-primary/30' : 'border-white/5'}`}>
                     <div className="p-4 flex flex-col sm:flex-row justify-between items-center gap-4">
                       <div className="flex items-center gap-4 w-full sm:w-auto">
                         <div className={`w-12 h-12 rounded-full flex items-center justify-center shrink-0 ${bg} ${color}`}><Icon className="w-6 h-6"/></div>
@@ -642,6 +729,13 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                             Sair da área
                           </button>
                         </div>
+                      ) : isLeavingArea ? (
+                        <div className="flex flex-col gap-2 w-full sm:w-auto">
+                          <button onClick={() => openAreaModal(areaDetails.id)} className="w-full sm:w-auto bg-surface-dark border border-brand-primary/30 text-brand-primary px-6 py-2.5 rounded-default text-sm font-semibold hover:bg-brand-primary hover:text-white transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                            Acessar Área
+                          </button>
+                          <span className="flex items-center justify-center gap-1.5 text-amber-400 text-xs font-semibold"><Clock className="w-3.5 h-3.5"/> Aguardando aprovação de saída</span>
+                        </div>
                       ) : (
                         <div className="flex flex-col gap-2 w-full sm:w-auto">
                           <span className="flex items-center justify-center gap-1.5 text-amber-400 text-sm font-bold bg-amber-500/10 border border-amber-500/20 px-5 py-2.5 rounded-default">
@@ -656,115 +750,13 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
 
                     {isLeader && (
                       <div className="p-4 border-t border-white/5 bg-surface-dark/30">
-                        <h4 className="text-sm font-bold text-text-primary mb-3 flex items-center gap-2"><Users className="w-4 h-4"/> Solicitações de Entrada ({pending.length})</h4>
-                        {pending.length === 0 ? (
-                          <p className="text-xs text-text-muted italic">Não há pedidos pendentes no momento.</p>
-                        ) : (
-                          <div className="space-y-2">
-                            {pending.map(req => (
-                              <div key={req.id} className="flex justify-between items-center bg-surface-card p-3 rounded-md border border-white/5">
-                                <span className="flex items-center gap-2 text-sm font-semibold text-text-primary"><Avatar name={req.user?.name} src={req.user?.profileImage} size={28} /> {req.user?.name || 'Voluntário'}</span>
-                                <div className="flex gap-2">
-                                  <button onClick={() => handleApproveRejectArea(req.id, areaDetails.id, 'RECUSADO')} className="p-2 rounded-md hover:bg-red-500/20 text-red-400 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-4 h-4"/></button>
-                                  <button onClick={() => handleApproveRejectArea(req.id, areaDetails.id, 'APROVADO')} className="p-2 rounded-md hover:bg-green-500/20 text-green-400 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><CheckCircle className="w-4 h-4"/></button>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
+                        <div className="flex items-center justify-between mb-3">
+                          <h4 className="text-sm font-bold text-text-primary flex items-center gap-2"><Users className="w-4 h-4"/> Solicitações de Entrada/Saída ({pending.length + (areaLeaveRequests[areaDetails.id] || []).length})</h4>
+                          <button onClick={() => openAreaModal(areaDetails.id, 'lideranca')} className="text-xs text-brand-primary hover:underline font-semibold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Gerenciar em Liderança →</button>
+                        </div>
+                        {renderMembershipRequests(areaDetails.id)}
                       </div>
                     )}
-
-                    {isLeader && (() => {
-                      const positions = areaPositions[areaDetails.id] || [];
-                      const posDraft = newPositionName[areaDetails.id] || '';
-                      return (
-                        <div className="p-4 border-t border-white/5 bg-surface-dark/30">
-                          <h4 className="text-sm font-bold text-text-primary mb-3 flex items-center gap-2"><Briefcase className="w-4 h-4"/> Posições da Área ({positions.length})</h4>
-                          {positions.length > 0 && (
-                            <div className="flex flex-wrap gap-2 mb-3">
-                              {positions.map(p => (
-                                <span key={p.id} className="flex items-center gap-1.5 bg-surface-card border border-white/10 text-white text-xs px-2.5 py-1.5 rounded-full">
-                                  {p.name}
-                                  <button onClick={() => handleDeletePosition(p.id, areaDetails.id)} title="Remover posição" className="text-text-muted hover:text-red-400 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-3 h-3"/></button>
-                                </span>
-                              ))}
-                            </div>
-                          )}
-                          <div className="flex gap-2">
-                            <input type="text" value={posDraft} onChange={e => setNewPositionName(prev => ({ ...prev, [areaDetails.id]: e.target.value }))} placeholder="Nova posição (ex: Barista)" maxLength={60} className="flex-1 bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60" />
-                            <button onClick={() => handleAddPosition(areaDetails.id)} className="bg-surface-card border border-white/10 hover:border-brand-primary text-white px-4 py-2 rounded-md text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Adicionar</button>
-                          </div>
-                        </div>
-                      );
-                    })()}
-
-                    {isLeader && (() => {
-                      const sh = areaShifts[areaDetails.id] || [];
-                      const approved = areaApproved[areaDetails.id] || [];
-                      const draft = shiftDrafts[areaDetails.id] || {};
-                      const positions = areaPositions[areaDetails.id] || [];
-                      const selEventId = scheduleEventId[areaDetails.id] || '';
-                      const matches = availableForEvent[areaDetails.id];
-                      const recurringEvents = events.filter(e => e.type === 'VOLUNTARIO' || e.recurrence !== 'NONE');
-                      return (
-                        <div className="p-4 border-t border-white/5 bg-surface-dark/30">
-                          <h4 className="text-sm font-bold text-text-primary mb-3 flex items-center gap-2"><CalendarDays className="w-4 h-4"/> Escalas ({sh.length})</h4>
-                          <div className="space-y-2 mb-3">
-                            {sh.length === 0 ? <p className="text-xs text-text-muted italic">Nenhuma escala criada.</p> : sh.map(s => (
-                              <div key={s.id} className="flex justify-between items-center bg-surface-card p-2.5 rounded-md border border-white/5 text-sm">
-                                <div className="flex items-center gap-2 min-w-0">
-                                  <Avatar name={s.user?.name || '?'} src={s.user?.profileImage} size={26} />
-                                  <div className="min-w-0">
-                                    <div className="text-white truncate">{s.user?.name || 'Vaga aberta'}{s.position?.name ? ` • ${s.position.name}` : ''}</div>
-                                    <div className="text-xs text-text-muted">{new Date(s.date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} • {s.status}</div>
-                                  </div>
-                                </div>
-                                <button onClick={() => handleDeleteShift(s.id, areaDetails.id)} title="Remover" className="p-1.5 rounded-md text-text-muted hover:text-red-400 hover:bg-red-500/10 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Trash2 className="w-4 h-4"/></button>
-                              </div>
-                            ))}
-                          </div>
-
-                          {recurringEvents.length > 0 && (
-                            <div className="mb-3 bg-surface-card border border-white/10 rounded-md p-3">
-                              <label className="text-xs text-text-muted mb-1.5 block">Filtrar disponíveis por evento (dia/período)</label>
-                              <select value={selEventId} onChange={e => handleScheduleEventFilter(areaDetails.id, e.target.value)} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
-                                <option value="">Selecione um evento...</option>
-                                {recurringEvents.map(e => <option key={e.id} value={e.id}>{e.title}</option>)}
-                              </select>
-                              {selEventId && (
-                                <div className="mt-2 text-xs text-text-muted">
-                                  {matches === undefined ? null : matches === null ? null : matches.length === 0 ? 'Nenhum voluntário marcou disponibilidade nesse dia/período.' : (
-                                    <div className="flex flex-wrap gap-1.5 mt-1">
-                                      {matches.map(u => (
-                                        <button key={u.id} onClick={() => setDraft(areaDetails.id, { volunteerId: u.id })} className="flex items-center gap-1.5 bg-brand-primary/10 border border-brand-primary/30 text-brand-primary text-xs px-2 py-1 rounded-full hover:bg-brand-primary/20 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
-                                          <Avatar name={u.name} src={u.profileImage} size={16} /> {u.name}
-                                        </button>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          )}
-
-                          <div className="flex flex-col sm:flex-row gap-2">
-                            <input type="datetime-local" value={draft.date || ''} onChange={e => setDraft(areaDetails.id, { date: e.target.value })} className="flex-1 bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 [color-scheme:dark]" />
-                            <select value={draft.volunteerId || ''} onChange={e => setDraft(areaDetails.id, { volunteerId: e.target.value })} className="bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
-                              <option value="">Vaga aberta</option>
-                              {approved.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                            </select>
-                            {positions.length > 0 && (
-                              <select value={draft.positionId || ''} onChange={e => setDraft(areaDetails.id, { positionId: e.target.value })} className="bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
-                                <option value="">Sem posição</option>
-                                {positions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                              </select>
-                            )}
-                            <button onClick={() => handleCreateShift(areaDetails.id)} className="bg-brand-primary text-white px-4 py-2 rounded-md font-bold text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Escalar</button>
-                          </div>
-                        </div>
-                      );
-                    })()}
                   </div>
                 );
               })}
@@ -795,6 +787,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
               <div className="flex gap-4 mt-6 border-b border-white/10 overflow-x-auto no-scrollbar">
                 {[
                   { id: 'escalas',      label: 'Escalas & Disp.' },
+                  ...(isModalLeader ? [{ id: 'lideranca', label: '⭐ Liderança' }] : []),
                   { id: 'treinamentos', label: 'Treinamentos' },
                   { id: 'equipe',       label: 'Equipe' },
                   { id: 'mural',        label: 'Mural' },
@@ -822,7 +815,10 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
               )}
 
               {/* TAB: ESCALAS & DISPONIBILIDADE */}
-              {modalTab === 'escalas' && (
+              {modalTab === 'escalas' && (() => {
+                const areaMyShifts = myFutureShifts.filter(s => s.areaId === selectedAreaId);
+                const areaOpenShifts = openFutureShifts.filter(s => s.areaId === selectedAreaId);
+                return (
                 <div className="space-y-8 animate-in fade-in">
                   <div>
                     <h4 className="text-sm font-bold text-text-primary mb-4 flex items-center gap-2">
@@ -830,14 +826,14 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                     </h4>
                     {isLoading ? (
                       <div className="flex justify-center py-5"><div className="w-6 h-6 border-2 border-brand-primary border-t-transparent rounded-full animate-spin"></div></div>
-                    ) : futureShifts.length === 0 ? (
+                    ) : areaMyShifts.length === 0 ? (
                       <div className="text-center text-text-muted py-8 bg-surface-dark border border-dashed border-white/10 rounded-default text-sm">Não há escalas agendadas para os próximos dias.</div>
                     ) : (
                       <div className="space-y-3">
-                        {futureShifts.map(shift => (
+                        {areaMyShifts.map(shift => (
                           <div key={shift.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-surface-dark rounded-default border border-white/5 gap-4">
                             <div>
-                              <div className="font-bold text-text-primary">{shift.department}</div>
+                              <div className="font-bold text-text-primary">{shift.department}{shift.position?.name ? ` • ${shift.position.name}` : ''}</div>
                               <div className="text-sm text-text-muted font-medium capitalize mt-1">
                                 <Clock className="w-3.5 h-3.5 inline mr-1 text-brand-primary"/>{formatData(shift.date)}
                               </div>
@@ -852,6 +848,31 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                                 Confirmar
                               </button>
                             )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="border-t border-white/5 pt-8">
+                    <h4 className="text-sm font-bold text-text-primary mb-4 flex items-center gap-2">
+                      <Users className="w-4 h-4 text-brand-primary"/> Vagas em Aberto
+                    </h4>
+                    {areaOpenShifts.length === 0 ? (
+                      <div className="text-center text-text-muted py-6 bg-surface-dark border border-dashed border-white/10 rounded-default text-sm">Nenhuma vaga em aberto no momento.</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {areaOpenShifts.map(shift => (
+                          <div key={shift.id} className="flex flex-col sm:flex-row sm:items-center justify-between p-4 bg-surface-dark rounded-default border border-dashed border-brand-primary/30 gap-4">
+                            <div>
+                              <div className="font-bold text-text-primary">{shift.department}{shift.position?.name ? ` • ${shift.position.name}` : ''}</div>
+                              <div className="text-sm text-text-muted font-medium capitalize mt-1">
+                                <Clock className="w-3.5 h-3.5 inline mr-1 text-brand-primary"/>{formatData(shift.date)}
+                              </div>
+                            </div>
+                            <button onClick={() => handleClaimShift(shift.id)} className="w-full sm:w-auto bg-brand-primary text-white px-6 py-2 rounded-default text-sm font-semibold hover:bg-brand-secondary active:scale-95 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 transition-all">
+                              Aceitar vaga
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -897,7 +918,117 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                     </div>
                   </div>
                 </div>
-              )}
+                );
+              })()}
+
+              {/* TAB: LIDERANÇA — posições, criação de escala e solicitações de entrada/saída */}
+              {modalTab === 'lideranca' && isModalLeader && (() => {
+                const areaId = activeAreaDetails.id;
+                const positions = areaPositions[areaId] || [];
+                const posDraft = newPositionName[areaId] || '';
+                const sh = areaShifts[areaId] || [];
+                const approved = areaApproved[areaId] || [];
+                const draft = shiftDrafts[areaId] || {};
+                const selEventId = scheduleEventId[areaId] || '';
+                const matches = availableForEvent[areaId];
+                const recurringEvents = events.filter(e => e.type === 'VOLUNTARIO' || e.recurrence !== 'NONE');
+                return (
+                  <div className="space-y-8 animate-in fade-in">
+                    <div>
+                      <h4 className="text-sm font-bold text-text-primary mb-3 flex items-center gap-2"><Users className="w-4 h-4 text-brand-primary"/> Solicitações de Entrada/Saída</h4>
+                      {renderMembershipRequests(areaId)}
+                    </div>
+
+                    <div className="border-t border-white/5 pt-8">
+                      <h4 className="text-sm font-bold text-text-primary mb-3 flex items-center gap-2"><Briefcase className="w-4 h-4 text-brand-primary"/> Posições da Área ({positions.length})</h4>
+                      {positions.length > 0 && (
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {positions.map(p => (
+                            <span key={p.id} className="flex items-center gap-1.5 bg-surface-dark border border-white/10 text-white text-xs px-2.5 py-1.5 rounded-full">
+                              {p.name}
+                              <button onClick={() => handleDeletePosition(p.id, areaId)} title="Remover posição" className="text-text-muted hover:text-red-400 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-3 h-3"/></button>
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                      <div className="flex gap-2">
+                        <input type="text" value={posDraft} onChange={e => setNewPositionName(prev => ({ ...prev, [areaId]: e.target.value }))} placeholder="Nova posição (ex: Barista)" maxLength={60} className="flex-1 bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60" />
+                        <button onClick={() => handleAddPosition(areaId)} className="bg-surface-dark border border-white/10 hover:border-brand-primary text-white px-4 py-2 rounded-md text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Adicionar</button>
+                      </div>
+                    </div>
+
+                    <div className="border-t border-white/5 pt-8">
+                      <h4 className="text-sm font-bold text-text-primary mb-3 flex items-center gap-2"><CalendarDays className="w-4 h-4 text-brand-primary"/> Criar Escala ({sh.length} criadas)</h4>
+                      <div className="space-y-2 mb-4">
+                        {sh.length === 0 ? <p className="text-xs text-text-muted italic">Nenhuma escala criada.</p> : sh.map(s => (
+                          <div key={s.id} className="flex justify-between items-center bg-surface-dark p-2.5 rounded-md border border-white/5 text-sm">
+                            <div className="flex items-center gap-2 min-w-0">
+                              <Avatar name={s.user?.name || '?'} src={s.user?.profileImage} size={26} />
+                              <div className="min-w-0">
+                                <div className="text-white truncate">{s.user?.name || 'Vaga aberta'}{s.position?.name ? ` • ${s.position.name}` : ''}</div>
+                                <div className="text-xs text-text-muted">{new Date(s.date).toLocaleDateString('pt-BR', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })} • {s.status}</div>
+                              </div>
+                            </div>
+                            <button onClick={() => handleDeleteShift(s.id, areaId)} title="Remover" className="p-1.5 rounded-md text-text-muted hover:text-red-400 hover:bg-red-500/10 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Trash2 className="w-4 h-4"/></button>
+                          </div>
+                        ))}
+                      </div>
+
+                      {recurringEvents.length > 0 && (
+                        <div className="mb-4 bg-surface-dark border border-white/10 rounded-md p-3">
+                          <label className="text-xs text-text-muted mb-1.5 block">Filtrar disponíveis por evento (dia/período)</label>
+                          <select value={selEventId} onChange={e => handleScheduleEventFilter(areaId, e.target.value)} className="w-full bg-surface-card border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                            <option value="">Selecione um evento...</option>
+                            {recurringEvents.map(e => <option key={e.id} value={e.id}>{e.title}</option>)}
+                          </select>
+                          {selEventId && (
+                            <div className="mt-2 text-xs text-text-muted">
+                              {matches === undefined ? null : matches === null ? null : matches.length === 0 ? 'Nenhum voluntário marcou disponibilidade nesse dia/período.' : (
+                                <div className="flex flex-wrap gap-1.5 mt-1">
+                                  {matches.map(u => (
+                                    <button key={u.id} onClick={() => setDraft(areaId, { volunteerId: u.id })} className="flex items-center gap-1.5 bg-brand-primary/10 border border-brand-primary/30 text-brand-primary text-xs px-2 py-1 rounded-full hover:bg-brand-primary/20 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                                      <Avatar name={u.name} src={u.profileImage} size={16} /> {u.name}
+                                    </button>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      )}
+
+                      <div className="bg-surface-dark border border-white/10 rounded-md p-4 space-y-3">
+                        <div className="grid grid-cols-2 gap-3">
+                          <div>
+                            <label className="text-xs text-text-muted mb-1 block">Data</label>
+                            <input type="date" value={draft.dateOnly || ''} onChange={e => setDraft(areaId, { dateOnly: e.target.value })} className="w-full bg-surface-card border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 [color-scheme:dark]" />
+                          </div>
+                          <div>
+                            <label className="text-xs text-text-muted mb-1 block">Horário</label>
+                            <select value={draft.timeOnly || ''} onChange={e => setDraft(areaId, { timeOnly: e.target.value })} className="w-full bg-surface-card border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                              <option value="">Selecione...</option>
+                              {SHIFT_TIME_OPTIONS.map(t => <option key={t} value={t}>{t}</option>)}
+                            </select>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                          <select value={draft.volunteerId || ''} onChange={e => setDraft(areaId, { volunteerId: e.target.value })} className="bg-surface-card border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                            <option value="">Vaga aberta (visível a todos até alguém aceitar)</option>
+                            {approved.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                          </select>
+                          {positions.length > 0 && (
+                            <select value={draft.positionId || ''} onChange={e => setDraft(areaId, { positionId: e.target.value })} className="bg-surface-card border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                              <option value="">Sem posição</option>
+                              {positions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                            </select>
+                          )}
+                        </div>
+                        <button onClick={() => handleCreateShift(areaId)} className="w-full bg-brand-primary text-white px-4 py-2.5 rounded-md font-bold text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-brand-secondary transition-colors">Criar Escala</button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()}
 
               {/* TAB: TREINAMENTOS — FIX: BookOpen importado, sem tela preta */}
               {modalTab === 'treinamentos' && (
@@ -1088,11 +1219,11 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
           <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
             <div className="flex justify-center mb-4 text-amber-400"><div className="bg-amber-500/10 p-3 rounded-full"><AlertTriangle className="w-8 h-8"/></div></div>
             <h3 className="text-xl font-bold text-text-primary text-center mb-2">
-              {areaToCancel.status === 'APROVADO' ? 'Sair da área?' : 'Cancelar Solicitação?'}
+              {areaToCancel.status === 'APROVADO' ? 'Pedir saída da área?' : 'Cancelar Solicitação?'}
             </h3>
             <p className="text-text-muted text-center mb-6 text-sm">
               {areaToCancel.status === 'APROVADO'
-                ? 'Você vai sair desta área. Para voltar a servir será necessário solicitar novamente.'
+                ? 'Seu pedido de saída será enviado ao líder da área para aprovação. Você continua na equipe até lá.'
                 : 'Tem certeza que deseja cancelar sua solicitação de entrada nesta área?'}
             </p>
             <div className="flex gap-3">

@@ -98,7 +98,7 @@ const isIntercessionArea = (name?: string | null) => { const n = normalizeName(n
 // Voluntário APROVADO ou líder de alguma área de intercessão
 const isIntercessor = async (userId: string) => {
   const [parts, ledAreas] = await Promise.all([
-    prisma.areaParticipation.findMany({ where: { userId, status: 'APROVADO' }, include: { area: true } }),
+    prisma.areaParticipation.findMany({ where: { userId, status: { in: ['APROVADO', 'SAIDA_PENDENTE'] } }, include: { area: true } }),
     prisma.area.findMany({ where: { leaderId: userId } }),
   ]);
   return parts.some(p => isIntercessionArea(p.area?.name)) || ledAreas.some(a => isIntercessionArea(a.name));
@@ -439,7 +439,7 @@ app.post('/api/prayer-requests', validate(prayerSchema), h(async (req, res) => {
   const pr = await prisma.prayerRequest.create({ data: { content: req.body.content, userId: req.user!.id } });
   // Notifica os intercessores (voluntários APROVADOS + líderes de áreas de intercessão)
   const [parts, areas, me] = await Promise.all([
-    prisma.areaParticipation.findMany({ where: { status: 'APROVADO' }, include: { area: true } }),
+    prisma.areaParticipation.findMany({ where: { status: { in: ['APROVADO', 'SAIDA_PENDENTE'] } }, include: { area: true } }),
     prisma.area.findMany(),
     prisma.user.findUnique({ where: { id: req.user!.id }, select: { name: true } }),
   ]);
@@ -565,7 +565,7 @@ app.delete('/api/announcements/:id', staffOnly,h(async (req, res) => { await pri
 
 // --- ÁREAS (VOLUNTARIADO) ---
 app.get('/api/areas', h(async (req, res) => {
-  const areas = await prisma.area.findMany({ include: { leader: { select: userPublic }, participations: { where: { status: 'APROVADO' } } } });
+  const areas = await prisma.area.findMany({ include: { leader: { select: userPublic }, participations: { where: { status: { in: ['APROVADO', 'SAIDA_PENDENTE'] } } } } });
   res.json(areas.map(a => ({ ...a, approvedCount: a.participations.length, participations: undefined })));
 }));
 app.post('/api/areas', canManage('areas'),validate(areaSchema), h(async (req, res) => res.status(201).json(await prisma.area.create({ data: req.body, include: { leader: { select: userPublic } } }))));
@@ -586,12 +586,36 @@ app.post('/api/areas/:id/request', h(async (req, res) => {
     res.status(201).json(part);
   } catch { res.status(409).json({ error: 'Você já solicitou participação nesta área.' }); }
 }));
-app.delete('/api/areas/:id/request', h(async (req, res) => { await prisma.areaParticipation.deleteMany({ where: { userId: req.user!.id, areaId: pid(req) } }); res.json({ message: "Cancelado" }); }));
+app.delete('/api/areas/:id/request', h(async (req, res) => {
+  const areaId = pid(req);
+  const part = await prisma.areaParticipation.findUnique({ where: { userId_areaId: { userId: req.user!.id, areaId } } });
+  if (!part) return res.json({ message: "Cancelado" });
+  if (part.status === 'APROVADO') {
+    // Sair de uma área aprovada vira um pedido — o líder precisa aprovar a saída
+    const updated = await prisma.areaParticipation.update({ where: { id: part.id }, data: { status: 'SAIDA_PENDENTE' } });
+    const area = await prisma.area.findUnique({ where: { id: areaId } });
+    const me = await prisma.user.findUnique({ where: { id: req.user!.id }, select: { name: true } });
+    if (area) notify(area.leaderId, 'REQUEST', 'Pedido de saída', `${me?.name || 'Um voluntário'} pediu para sair da área "${area.name}".`, area.id, 'voluntarios');
+    return res.json(updated);
+  }
+  await prisma.areaParticipation.deleteMany({ where: { userId: req.user!.id, areaId } });
+  res.json({ message: "Cancelado" });
+}));
 app.get('/api/areas/:id/participations', h(async (req, res) => res.json(await prisma.areaParticipation.findMany({ where: { areaId: pid(req) }, include: { user: { select: userPublic } }, orderBy: { createdAt: 'asc' } }))));
 app.patch('/api/areas/participations/:id', validate(statusSchema), h(async (req, res) => {
   const part = await prisma.areaParticipation.findUnique({ where: { id: pid(req) }, include: { area: true } });
   if (!part) return res.status(404).json({ error: 'Participação não encontrada.' });
   if (part.area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode aprovar/recusar.' });
+  if (part.status === 'SAIDA_PENDENTE') {
+    if (req.body.status === 'APROVADO') {
+      await prisma.areaParticipation.delete({ where: { id: pid(req) } });
+      notify(part.userId, 'INFO', 'Saída confirmada', `Sua saída da área "${part.area.name}" foi confirmada pelo líder.`, part.area.id, 'voluntarios');
+      return res.json({ message: 'Removido' });
+    }
+    const reverted = await prisma.areaParticipation.update({ where: { id: pid(req) }, data: { status: 'APROVADO' }, include: { user: { select: userPublic } } });
+    notify(part.userId, 'INFO', 'Permanência na área', `Seu pedido de saída da área "${part.area.name}" foi recusado — você continua na equipe.`, part.area.id, 'voluntarios');
+    return res.json(reverted);
+  }
   const updated = await prisma.areaParticipation.update({ where: { id: pid(req) }, data: { status: req.body.status }, include: { user: { select: userPublic } } });
   const aprovado = req.body.status === 'APROVADO';
   notify(part.userId, aprovado ? 'APPROVED' : 'REJECTED', aprovado ? 'Voluntariado aprovado!' : 'Solicitação recusada', `Sua entrada na área "${part.area.name}" foi ${aprovado ? 'aprovada' : 'recusada'}.`, part.area.id, 'voluntarios');
@@ -640,7 +664,7 @@ app.post('/api/areas/:id/availability', validate(availabilitySchema), h(async (r
   const isLeaderOrStaff = (await prisma.area.findUnique({ where: { id: areaId } }))?.leaderId === req.user!.id || await hasModuleAccess(req, 'areas');
   if (!isLeaderOrStaff) {
     const part = await prisma.areaParticipation.findUnique({ where: { userId_areaId: { userId: req.user!.id, areaId } } });
-    if (!part || part.status !== 'APROVADO') return res.status(403).json({ error: 'Apenas voluntários aprovados podem marcar disponibilidade.' });
+    if (!part || (part.status !== 'APROVADO' && part.status !== 'SAIDA_PENDENTE')) return res.status(403).json({ error: 'Apenas voluntários aprovados podem marcar disponibilidade.' });
   }
   const existing = await prisma.availability.findUnique({ where: { userId_areaId_weekday_period: { userId: req.user!.id, areaId, weekday: req.body.weekday, period: req.body.period } } });
   if (existing) { await prisma.availability.delete({ where: { id: existing.id } }); return res.json({ toggled: 'removed' }); }
@@ -671,7 +695,16 @@ app.delete('/api/shifts/:id', h(async (req, res) => {
   res.json({ message: 'Removido' });
 }));
 
-app.get('/api/shifts', h(async (req, res) => res.json(await prisma.shift.findMany({ where: { volunteerId: req.user!.id }, include: { area: true }, orderBy: { date: 'asc' } }))));
+// Minhas escalas + vagas em aberto das áreas onde sou voluntário aprovado (até alguém aceitar)
+app.get('/api/shifts', h(async (req, res) => {
+  const myAreaIds = (await prisma.areaParticipation.findMany({ where: { userId: req.user!.id, status: { in: ['APROVADO', 'SAIDA_PENDENTE'] } }, select: { areaId: true } })).map(p => p.areaId);
+  const shifts = await prisma.shift.findMany({
+    where: { OR: [{ volunteerId: req.user!.id }, { areaId: { in: myAreaIds }, volunteerId: null }] },
+    include: { area: true, position: true },
+    orderBy: { date: 'asc' },
+  });
+  res.json(shifts);
+}));
 app.patch('/api/shifts/:id/confirm', h(async (req, res) => {
   const current = await prisma.shift.findUnique({ where: { id: pid(req) } });
   if (!current) return res.status(404).json({ error: 'Escala não encontrada.' });
@@ -680,6 +713,19 @@ app.patch('/api/shifts/:id/confirm', h(async (req, res) => {
   const award = await awardPoints(req.user!.id, 'SHIFT_CONFIRMATION', shift.id, 50);
   const user = await prisma.user.findUnique({ where: { id: req.user!.id }, select: userPublic });
   res.json({ shift, awarded: award.awarded, points: user?.points });
+}));
+// Aceitar uma vaga em aberto (volunteerId null) — some da lista de "abertas" assim que alguém aceita
+app.patch('/api/shifts/:id/claim', h(async (req, res) => {
+  const shift = await prisma.shift.findUnique({ where: { id: pid(req) } });
+  if (!shift) return res.status(404).json({ error: 'Escala não encontrada.' });
+  if (shift.areaId) {
+    const part = await prisma.areaParticipation.findUnique({ where: { userId_areaId: { userId: req.user!.id, areaId: shift.areaId } } });
+    if (!part || (part.status !== 'APROVADO' && part.status !== 'SAIDA_PENDENTE')) return res.status(403).json({ error: 'Apenas voluntários aprovados da área podem aceitar esta vaga.' });
+  }
+  const result = await prisma.shift.updateMany({ where: { id: pid(req), volunteerId: null }, data: { volunteerId: req.user!.id, status: 'Confirmado' } });
+  if (result.count === 0) return res.status(409).json({ error: 'Esta vaga já foi ocupada.' });
+  const updated = await prisma.shift.findUnique({ where: { id: pid(req) }, include: { area: true, position: true, user: { select: userPublic } } });
+  res.json(updated);
 }));
 
 // --- MURAL DA ÁREA (mesma lógica do mural de Links) ---
