@@ -282,7 +282,7 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
       <div className="bg-surface-card bg-gradient-to-br from-orange-600/20 to-red-600/10 border border-orange-500/30 p-5 rounded-default shadow-level-2">
         <div className="flex items-start justify-between gap-4">
           <div className="min-w-0">
-            <h3 className="font-display font-bold text-lg text-white flex items-center gap-2"><BookOpen className="w-5 h-5 text-orange-400"/> Plano Bíblico 2026</h3>
+            <h3 className="font-display font-bold text-lg text-white flex items-center gap-2"><BookOpen className="w-5 h-5 text-orange-400 shrink-0"/> Plano Bíblico 2026</h3>
             {reading ? (
               <>
                 <p className="text-sm text-text-muted mt-1">Dia {reading.todayDay} • <span className="text-white font-semibold">{reading.todayReference}</span></p>
@@ -301,16 +301,20 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
                 ))}
           </div>
         </div>
-        <div className="mt-4 flex flex-col sm:flex-row gap-2">
+
+        <div className="mt-4">
           {reading?.todayDone ? (
-            <div className="flex-1 flex items-center justify-center gap-2 text-emerald-400 text-sm font-bold bg-emerald-500/10 border border-emerald-500/20 py-2.5 rounded-default"><CheckCircle className="w-4 h-4"/> Leitura de hoje concluída</div>
+            <div className="w-full flex items-center justify-center gap-2 text-emerald-400 text-sm font-bold bg-emerald-500/10 border border-emerald-500/20 py-3 rounded-default"><CheckCircle className="w-4 h-4"/> Leitura de hoje concluída</div>
           ) : (
-            <button onClick={openReadingModal} disabled={!reading} className="flex-1 bg-orange-500 hover:bg-orange-400 text-white py-2.5 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 disabled:opacity-50"><Flame className="w-4 h-4"/> Marcar leitura de hoje</button>
+            <button onClick={openReadingModal} disabled={!reading} className="w-full bg-orange-500 hover:bg-orange-400 text-white py-3 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 disabled:opacity-50"><Flame className="w-4 h-4"/> Marcar leitura de hoje</button>
           )}
-          <button onClick={openReadingText} className="sm:w-auto bg-surface-dark border border-white/10 text-white py-2.5 px-4 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-white/5"><BookOpen className="w-4 h-4"/> Ler agora</button>
-          <button onClick={() => setShowGroups(true)} className="sm:w-auto bg-surface-dark border border-orange-500/30 text-orange-300 py-2.5 px-4 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-orange-500/10"><Trophy className="w-4 h-4"/> Grupos</button>
+        </div>
+
+        <div className={`mt-2.5 grid gap-2 ${reading?.spotifyUrl ? 'grid-cols-3' : 'grid-cols-2'}`}>
+          <button onClick={openReadingText} className="bg-surface-dark border border-white/10 text-white py-2.5 px-2 rounded-default text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-white/5"><BookOpen className="w-4 h-4 shrink-0"/> <span className="truncate">Ler agora</span></button>
+          <button onClick={() => setShowGroups(true)} className="bg-surface-dark border border-orange-500/30 text-orange-300 py-2.5 px-2 rounded-default text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-orange-500/10"><Trophy className="w-4 h-4 shrink-0"/> <span className="truncate">Grupos</span></button>
           {reading?.spotifyUrl && (
-            <a href={reading.spotifyUrl} target="_blank" rel="noopener noreferrer" className="sm:w-auto bg-surface-dark border border-emerald-500/30 text-emerald-300 py-2.5 px-4 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-emerald-500/10"><Music className="w-4 h-4"/> Ouvir no Spotify</a>
+            <a href={reading.spotifyUrl} target="_blank" rel="noopener noreferrer" className="bg-surface-dark border border-emerald-500/30 text-emerald-300 py-2.5 px-2 rounded-default text-sm font-semibold flex items-center justify-center gap-1.5 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-emerald-500/10"><Music className="w-4 h-4 shrink-0"/> <span className="truncate">Spotify</span></a>
           )}
         </div>
       </div>
