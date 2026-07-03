@@ -433,10 +433,9 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
         setShifts(prev => prev.map(s => s.id === shiftId ? { ...s, status: 'Confirmado' } : s));
         setUser(prev => ({ ...prev, points: data.points ?? prev.points }));
         showNotification(data.awarded ? `Escala confirmada! Você ganhou +${data.awarded} Zion Points! 🎉` : 'Escala confirmada!');
-      } else throw new Error();
+      } else showNotification(data.error || 'Não foi possível confirmar a escala.');
     } catch {
-      setShifts(prev => prev.map(s => s.id === shiftId ? { ...s, status: 'Confirmado' } : s));
-      showNotification('Escala confirmada (Modo Offline)!');
+      showNotification('Falha de rede ao confirmar a escala.');
     }
   };
 
@@ -515,9 +514,14 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
         const saved = await res.json();
         setMyAreas(prev => prev.map(p => p.id === tempId ? { ...p, id: saved.id, status: saved.status } : p));
         showNotification('Solicitação enviada! Aguarde a aprovação do líder.');
-      } else throw new Error('offline');
+      } else {
+        setMyAreas(prev => prev.filter(p => p.id !== tempId)); // desfaz otimista
+        const data = await res.json().catch(() => ({}));
+        showNotification(data.error || 'Não foi possível enviar a solicitação.');
+      }
     } catch {
-      showNotification('Solicitação registada localmente (Offline).');
+      setMyAreas(prev => prev.filter(p => p.id !== tempId));
+      showNotification('Falha de rede ao enviar a solicitação.');
     }
   };
 
@@ -537,13 +541,19 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     }
     try {
       const res = await apiFetch(`/api/areas/${participation.areaId}/request`, { method: 'DELETE' });
-      showNotification(isLeaving ? 'Pedido de saída enviado! Aguarde a aprovação do líder.' : 'Solicitação cancelada.');
-      if (isLeaving && res.ok) {
-        const updated = await res.json().catch(() => null);
-        if (updated?.id) setMyAreas(prev => prev.map(p => p.id === participation.id ? { ...p, id: updated.id, status: updated.status } : p));
+      if (res.ok) {
+        showNotification(isLeaving ? 'Pedido de saída enviado! Aguarde a aprovação do líder.' : 'Solicitação cancelada.');
+        if (isLeaving) {
+          const updated = await res.json().catch(() => null);
+          if (updated?.id) setMyAreas(prev => prev.map(p => p.id === participation.id ? { ...p, id: updated.id, status: updated.status } : p));
+        }
+      } else {
+        setMyAreas(prev => prev.some(p => p.id === participation.id) ? prev : [...prev, participation]); // desfaz otimista
+        showNotification('Não foi possível concluir a ação.');
       }
     } catch {
-      showNotification(isLeaving ? 'Pedido de saída registrado (Offline).' : 'Solicitação cancelada (Offline).');
+      setMyAreas(prev => prev.some(p => p.id === participation.id) ? prev : [...prev, participation]);
+      showNotification('Falha de rede.');
     }
   };
 

@@ -138,18 +138,23 @@ const LinksModule = ({ user, showNotification }) => {
 
   const handleRequestParticipation = async (link) => {
     if (myParticipations[link.id] || reachedLimit || !user?.id) return;
-    
-    setMyParticipations(prev => ({ ...prev, [link.id]: 'PENDENTE' }));
-    
+
+    setMyParticipations(prev => ({ ...prev, [link.id]: 'PENDENTE' })); // otimista
+
     try {
       const res = await apiFetch(`/api/links/${link.id}/request`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user.id })
       });
       if (res.ok) {
         showNotification(`Solicitação enviada para "${link.name}"!`);
-      } else throw new Error("Offline");
-    } catch (error) { 
-      showNotification(`Solicitação registada localmente para "${link.name}".`); 
+      } else {
+        setMyParticipations(prev => { const next = { ...prev }; delete next[link.id]; return next; }); // desfaz otimista
+        const data = await res.json().catch(() => ({}));
+        showNotification(data.error || `Não foi possível solicitar entrada em "${link.name}".`);
+      }
+    } catch {
+      setMyParticipations(prev => { const next = { ...prev }; delete next[link.id]; return next; });
+      showNotification('Falha de rede ao enviar a solicitação.');
     }
   };
 
@@ -157,26 +162,31 @@ const LinksModule = ({ user, showNotification }) => {
 
   const executeCancelParticipation = async () => {
     if (!linkToCancel || !user?.id) return;
-    const link = linkToCancel; 
+    const link = linkToCancel;
     setLinkToCancel(null);
     const prevStatus = myParticipations[link.id];
-    
+
     if (prevStatus === 'APROVADO') {
        showNotification(`Foi enviada uma notificação ao líder do "${link.name}" para conversar sobre a sua saída.`);
        setSelectedLink(null);
-       return; 
+       return;
     }
 
-    setMyParticipations(prev => { const next={...prev}; delete next[link.id]; return next; });
+    setMyParticipations(prev => { const next={...prev}; delete next[link.id]; return next; }); // otimista
     setSelectedLink(null);
-    
+
     try {
-      await apiFetch(`/api/links/${link.id}/request`, {
+      const res = await apiFetch(`/api/links/${link.id}/request`, {
         method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ userId: user.id })
       });
-      showNotification(`Ação confirmada.`);
-    } catch (error) { 
-      showNotification(`Ação confirmada (Modo Offline).`); 
+      if (res.ok) showNotification('Solicitação cancelada.');
+      else {
+        setMyParticipations(prev => ({ ...prev, [link.id]: prevStatus })); // desfaz otimista
+        showNotification('Não foi possível cancelar a solicitação.');
+      }
+    } catch {
+      setMyParticipations(prev => ({ ...prev, [link.id]: prevStatus }));
+      showNotification('Falha de rede ao cancelar.');
     }
   };
 
@@ -230,11 +240,12 @@ const LinksModule = ({ user, showNotification }) => {
         setLinks(links.map(l => l.id === updated.id ? updated : l));
         setEditingLink(null);
         showNotification("Link atualizado!");
-      } else throw new Error('Falhou');
-    } catch (e) {
-      setLinks(links.map(l => l.id === editingLink.id ? { ...l, ...formData } : l));
-      setEditingLink(null); 
-      showNotification("Link atualizado (Modo Offline)!");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showNotification(data.error || 'Não foi possível atualizar o Link.');
+      }
+    } catch {
+      showNotification('Falha de rede ao atualizar o Link.');
     }
   };
 
@@ -272,16 +283,12 @@ const LinksModule = ({ user, showNotification }) => {
         resetComposer();
         showNotification(isPoll ? "Enquete publicada!" : "Publicado no mural!");
         fetchMessagesForLink(selectedLink.id);
-      } else throw new Error('Offline');
-    } catch (err) {
-      const mockMsg = {
-         id: Date.now().toString(), content: newMsgContent, category: newMsgCategory, isPinned: false,
-         authorId: user?.id, author: { name: user?.name }, createdAt: new Date().toISOString(),
-         reactions: [], poll: isPoll ? { options: cleanOptions.map(text => ({ text, count: 0 })), totalVotes: 0, myVote: null } : null
-      };
-      setLinkMessages([mockMsg, ...linkMessages]);
-      resetComposer();
-      showNotification("Publicado no mural (Modo Local)!");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showNotification(data.error || 'Não foi possível publicar.');
+      }
+    } catch {
+      showNotification('Falha de rede ao publicar.');
     } finally { setIsPostingMsg(false); }
   };
 
@@ -373,11 +380,13 @@ const LinksModule = ({ user, showNotification }) => {
 
   const handleDeleteMessage = async (msgId) => {
     try {
-      await apiFetch(`/api/links/messages/${msgId}`, { method: 'DELETE' }).catch(() => null);
-      setLinkMessages(prev => prev.filter(m => m.id !== msgId));
-      showNotification("Mensagem apagada com sucesso.");
-    } catch(err) { 
-      setLinkMessages(prev => prev.filter(m => m.id !== msgId)); 
+      const res = await apiFetch(`/api/links/messages/${msgId}`, { method: 'DELETE' });
+      if (res.ok) {
+        setLinkMessages(prev => prev.filter(m => m.id !== msgId));
+        showNotification("Mensagem apagada com sucesso.");
+      } else showNotification('Não foi possível apagar a mensagem.');
+    } catch {
+      showNotification('Falha de rede ao apagar a mensagem.');
     }
   };
 

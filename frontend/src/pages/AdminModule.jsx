@@ -285,29 +285,25 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
 
   const executeConfirmDelete = async () => {
     const { type, id } = deleteConfirm;
+    setDeleteConfirm({ isOpen: false, type: '', id: null, title: '' });
     try {
-      await apiFetch(`/api/${type}/${id}`, { method: 'DELETE' }).catch(() => null);
-      if (type === 'links') setLinks(links.filter(i => i.id !== id));
-      if (type === 'events') setEvents(events.filter(i => i.id !== id));
-      if (type === 'announcements') setAnnouncements(announcements.filter(i => i.id !== id));
-      if (type === 'publications') setPublications(publications.filter(i => i.id !== id));
-      if (type === 'areas') setAreas(areas.filter(i => i.id !== id));
-      if (type === 'products') setProducts(products.filter(i => i.id !== id));
-      if (type === 'point-rules') setPointRules(pointRules.filter(i => i.id !== id));
-      if (type === 'reading-plans') setReadingPlans(readingPlans.filter(i => i.id !== id));
-      showNotification("Removido com sucesso.");
-    } catch (e) {
-      if (type === 'links') setLinks(links.filter(i => i.id !== id));
-      if (type === 'events') setEvents(events.filter(i => i.id !== id));
-      if (type === 'announcements') setAnnouncements(announcements.filter(i => i.id !== id));
-      if (type === 'publications') setPublications(publications.filter(i => i.id !== id));
-      if (type === 'areas') setAreas(areas.filter(i => i.id !== id));
-      if (type === 'products') setProducts(products.filter(i => i.id !== id));
-      if (type === 'point-rules') setPointRules(pointRules.filter(i => i.id !== id));
-      if (type === 'reading-plans') setReadingPlans(readingPlans.filter(i => i.id !== id));
-      showNotification("Removido (Offline).");
-    } finally {
-      setDeleteConfirm({ isOpen: false, type: '', id: null, title: '' });
+      const res = await apiFetch(`/api/${type}/${id}`, { method: 'DELETE' });
+      if (res.ok) {
+        if (type === 'links') setLinks(links.filter(i => i.id !== id));
+        if (type === 'events') setEvents(events.filter(i => i.id !== id));
+        if (type === 'announcements') setAnnouncements(announcements.filter(i => i.id !== id));
+        if (type === 'publications') setPublications(publications.filter(i => i.id !== id));
+        if (type === 'areas') setAreas(areas.filter(i => i.id !== id));
+        if (type === 'products') setProducts(products.filter(i => i.id !== id));
+        if (type === 'point-rules') setPointRules(pointRules.filter(i => i.id !== id));
+        if (type === 'reading-plans') setReadingPlans(readingPlans.filter(i => i.id !== id));
+        showNotification("Removido com sucesso.");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showNotification(data.error || "Não foi possível remover.");
+      }
+    } catch {
+      showNotification("Falha de rede ao remover.");
     }
   };
 
@@ -327,10 +323,12 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
           setLeaders(leaders.filter(l => l.id !== userId));
         }
         showNotification("Acesso atualizado!");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showNotification(data.error || "Não foi possível alterar o cargo.");
       }
-    } catch (e) {
-      setAllUsers(allUsers.map(u => u.id === userId ? { ...u, role: newRole } : u));
-      showNotification("Acesso atualizado (Offline)!");
+    } catch {
+      showNotification("Falha de rede ao alterar o cargo.");
     }
   };
 
@@ -342,10 +340,9 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
       if (res.ok) {
         setAllUsers(allUsers.map(u => u.id === userId ? { ...u, canRedeem } : u));
         showNotification(canRedeem ? 'Membro liberado como atendente (valida vouchers)!' : 'Acesso de atendente removido.');
-      }
-    } catch (e) {
-      setAllUsers(allUsers.map(u => u.id === userId ? { ...u, canRedeem } : u));
-      showNotification('Ação registrada (Offline).');
+      } else showNotification('Não foi possível alterar o acesso de atendente.');
+    } catch {
+      showNotification('Falha de rede.');
     }
   };
 
@@ -360,10 +357,9 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
       if (res.ok) {
         setAllUsers(allUsers.map(u => u.id === userId ? { ...u, [field]: value } : u));
         showNotification(value ? 'Acesso administrativo concedido!' : 'Acesso administrativo removido.');
-      }
-    } catch (e) {
-      setAllUsers(allUsers.map(u => u.id === userId ? { ...u, [field]: value } : u));
-      showNotification('Ação registrada (Offline).');
+      } else showNotification('Não foi possível alterar o acesso administrativo.');
+    } catch {
+      showNotification('Falha de rede.');
     }
   };
 
@@ -377,11 +373,12 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
         const saved = await res.json();
         setLinks(editingLinkId ? links.map(l => l.id === editingLinkId ? saved : l) : [...links, saved]);
         setShowLinkForm(false); setEditingLinkId(null); showNotification(editingLinkId ? 'Link Editado!' : 'Link Criado!');
-      } else throw new Error('offline');
-    } catch (e) {
-      const newL = { id: editingLinkId || Date.now().toString(), ...linkData, leader: leaders.find(l => l.id === linkData.leaderId) };
-      setLinks(editingLinkId ? links.map(l => l.id === editingLinkId ? newL : l) : [...links, newL]);
-      setShowLinkForm(false); setEditingLinkId(null); showNotification("Ação salva (Offline)!");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showNotification(data.error || 'Não foi possível salvar o Link.');
+      }
+    } catch {
+      showNotification('Falha de rede ao salvar o Link.');
     }
   };
 
@@ -400,11 +397,12 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
         const saved = await res.json();
         setEvents(editingEventId ? events.map(ev => ev.id === editingEventId ? saved : ev) : [...events, saved].sort((a,b)=>new Date(a.date)-new Date(b.date)));
         setShowEventForm(false); setEditingEventId(null); showNotification('Evento salvo!');
-      } else throw new Error('offline');
-    } catch (e) {
-      const fallback = { id: editingEventId || Date.now().toString(), ...payload };
-      setEvents(editingEventId ? events.map(ev => ev.id === editingEventId ? fallback : ev) : [...events, fallback].sort((a,b)=>new Date(a.date)-new Date(b.date)));
-      setShowEventForm(false); setEditingEventId(null); showNotification('Evento salvo (Offline)!');
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showNotification(data.error || 'Não foi possível salvar o evento.');
+      }
+    } catch {
+      showNotification('Falha de rede ao salvar o evento.');
     }
   };
 
@@ -429,11 +427,12 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
         const saved = await res.json();
         setAnnouncements(editingAnnId ? announcements.map(a => a.id === editingAnnId ? saved : a) : [saved, ...announcements]);
         setShowAnnForm(false); setEditingAnnId(null); showNotification("Comunicado salvo!");
-      } else throw new Error('offline');
-    } catch (e) {
-      const saved = { id: editingAnnId || Date.now().toString(), ...annData, createdAt: new Date().toISOString() };
-      setAnnouncements(editingAnnId ? announcements.map(a => a.id === editingAnnId ? saved : a) : [saved, ...announcements]);
-      setShowAnnForm(false); setEditingAnnId(null); showNotification("Comunicado salvo (Offline)!");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showNotification(data.error || 'Não foi possível salvar o comunicado.');
+      }
+    } catch {
+      showNotification('Falha de rede ao salvar o comunicado.');
     }
   };
 
@@ -448,12 +447,12 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
         setPublications([await res.json(), ...publications]);
         setShowPubForm(false); setPubData({ content: '', imageUrl: '', documentUrl: '' });
         showNotification("Publicação salva. Acesse Início para ver.");
-      } else throw new Error("Offline");
-    } catch (e) {
-      const newPub = { id: Date.now().toString(), ...pubData, author: { name: user.name }, createdAt: new Date().toISOString() };
-      setPublications([newPub, ...publications]);
-      setShowPubForm(false); setPubData({ content: '', imageUrl: '', documentUrl: '' });
-      showNotification("Publicação enviada (Offline).");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showNotification(data.error || 'Não foi possível salvar a publicação.');
+      }
+    } catch {
+      showNotification('Falha de rede ao salvar a publicação.');
     }
   };
 
@@ -467,11 +466,12 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
         const saved = await res.json();
         setAreas(editingAreaId ? areas.map(a => a.id === editingAreaId ? saved : a) : [...areas, saved]);
         setShowAreaForm(false); setEditingAreaId(null); showNotification("Área salva com sucesso!");
-      } else throw new Error();
-    } catch (e) {
-      const newA = { id: editingAreaId || Date.now().toString(), ...areaData, leader: leaders.find(l => l.id === areaData.leaderId) };
-      setAreas(editingAreaId ? areas.map(a => a.id === editingAreaId ? newA : a) : [...areas, newA]);
-      setShowAreaForm(false); setEditingAreaId(null); showNotification("Área salva (Offline)!");
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showNotification(data.error || 'Não foi possível salvar a área.');
+      }
+    } catch {
+      showNotification('Falha de rede ao salvar a área.');
     }
   };
 

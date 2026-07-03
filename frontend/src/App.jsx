@@ -271,12 +271,14 @@ export default function App() {
         const updated = await res.json();
         setUser(prev => ({ ...prev, name: updated.name, profileImage: updated.profileImage }));
         showNotificationMsg("Perfil atualizado!");
-      } else throw new Error();
+        setShowProfileModal(false);
+      } else {
+        const data = await res.json().catch(() => ({}));
+        showNotificationMsg(data.error || "Não foi possível atualizar o perfil.");
+      }
     } catch {
-      setUser(prev => ({ ...prev, name: editName, profileImage: editImage }));
-      showNotificationMsg("Perfil atualizado (Offline)!");
+      showNotificationMsg("Falha de rede ao atualizar o perfil.");
     }
-    setShowProfileModal(false);
   };
 
   // Enquanto verifica o token salvo
