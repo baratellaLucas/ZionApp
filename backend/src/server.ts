@@ -52,6 +52,7 @@ const PERM_CATALOG: { key: string; label: string; description: string; category:
   { key: 'EVENT_MANAGE',        label: 'Criar/editar/excluir eventos',    description: 'Gerenciar a agenda de eventos do app.',                              category: 'Eventos',       defaultMinRank: ROLE_RANK.ADMIN },
   { key: 'GROUP_CREATE',        label: 'Criar grupos de leitura',         description: 'Criar novos grupos de competição do Plano Bíblico.',                 category: 'Plano Bíblico', defaultMinRank: ROLE_RANK.MEMBRO },
   { key: 'READING_PLAN_MANAGE', label: 'Editar o Plano Bíblico',          description: 'Criar/editar planos de leitura anuais (Admin > Plano Bíblico).',      category: 'Plano Bíblico', defaultMinRank: ROLE_RANK.ADMIN },
+  { key: 'READING_ADJUST',      label: 'Ajustar contagem de leitura',     description: 'Aumentar/diminuir manualmente os dias de leitura de um membro.',     category: 'Plano Bíblico', defaultMinRank: ROLE_RANK.ADMIN },
   { key: 'ANNOUNCEMENT_MANAGE', label: 'Gerenciar comunicados globais',   description: 'Criar/editar/excluir avisos do Mural Geral.',                        category: 'Comunicação',   defaultMinRank: ROLE_RANK.ADMIN },
   { key: 'PUBLICATION_MANAGE',  label: 'Moderar publicações do mural',    description: 'Excluir publicações de qualquer pessoa no mural do Início, além das próprias.', category: 'Comunicação',   defaultMinRank: ROLE_RANK.ADMIN },
   { key: 'POINT_RULE_MANAGE',   label: 'Editar regras de pontuação',      description: 'Ajustar quantos Zion Points cada ação concede (Gamificação).',       category: 'Gamificação',   defaultMinRank: ROLE_RANK.ADMIN },
@@ -1045,6 +1046,54 @@ app.get('/api/reading/ranking', h(async (req, res) => {
     .map(u => ({ ...u, groupName: groupNameById[u.id] || null }))
     .sort((a, b) => (b.bibleStreak - a.bibleStreak) || (b.points - a.points));
   res.json(ranking);
+}));
+
+// --- ADMIN: AJUSTAR CONTAGEM DE LEITURA DE UM MEMBRO (Admin > Plano Bíblico) ---
+app.get('/api/admin/reading/:userId', requirePerm('READING_ADJUST'), h(async (req, res) => {
+  const userId = pid(req);
+  const [user, count] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId }, select: userPublic }),
+    prisma.readingLog.count({ where: { userId } }),
+  ]);
+  if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
+  res.json({ user, count });
+}));
+
+const readingAdjustSchema = z.object({ userId: z.string().min(1), newCount: z.number().int().min(0).max(400) });
+app.post('/api/admin/reading/adjust', requirePerm('READING_ADJUST'), validate(readingAdjustSchema), h(async (req, res) => {
+  const { userId, newCount } = req.body as { userId: string; newCount: number };
+  const user = await prisma.user.findUnique({ where: { id: userId } });
+  if (!user) return res.status(404).json({ error: 'Usuário não encontrado.' });
+
+  const logs = await prisma.readingLog.findMany({ where: { userId }, orderBy: { day: 'asc' } });
+  const oldCount = logs.length;
+  const days = getPlanDays();
+  const noPhotoPts = await rulePts('BIBLE_DAILY_NOPHOTO', 5);
+  const milestoneBonus = async (m: number) => rulePts(`BIBLE_MILESTONE_${m}`, DEFAULT_MILESTONE_BONUS[m] || 0);
+
+  let pointsDelta = 0;
+  if (newCount > oldCount) {
+    const existingDays = new Set(logs.map(l => l.day));
+    const toAdd: number[] = [];
+    for (let d = 1; toAdd.length < (newCount - oldCount) && d <= 4000; d++) {
+      if (!existingDays.has(d)) toAdd.push(d);
+    }
+    await prisma.readingLog.createMany({ data: toAdd.map(d => ({ userId, day: d, reference: days[d - 1] || `Dia ${d}`, photoUrl: '' })) });
+    pointsDelta += toAdd.length * noPhotoPts;
+    for (const m of READING_MILESTONES) if (m > oldCount && m <= newCount) pointsDelta += await milestoneBonus(m);
+  } else if (newCount < oldCount) {
+    const toRemove = logs.slice().sort((a, b) => b.day - a.day).slice(0, oldCount - newCount);
+    await prisma.readingLog.deleteMany({ where: { id: { in: toRemove.map(l => l.id) } } });
+    pointsDelta -= toRemove.length * noPhotoPts;
+    for (const m of READING_MILESTONES) if (m > newCount && m <= oldCount) pointsDelta -= await milestoneBonus(m);
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: userId },
+    data: { bibleStreak: newCount, points: Math.max(0, user.points + pointsDelta) },
+    select: userPublic,
+  });
+  res.json({ user: updated, oldCount, newCount, pointsDelta });
 }));
 
 // --- ADMIN: PLANOS DE LEITURA POR ANO (Admin > Plano Bíblico) ---

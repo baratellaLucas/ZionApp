@@ -23,6 +23,12 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   const [editingPlan, setEditingPlan] = useState(null); // { id, year, label, spotifyUrl, daysText }
   const [loadingPlanDetail, setLoadingPlanDetail] = useState(false);
   const [savingPlan, setSavingPlan] = useState(false);
+  // Ajustar contagem de leitura de um membro (Admin > Plano Bíblico)
+  const [adjustUserId, setAdjustUserId] = useState('');
+  const [adjustInfo, setAdjustInfo] = useState(null); // { user, count }
+  const [adjustNewCount, setAdjustNewCount] = useState('');
+  const [loadingAdjustInfo, setLoadingAdjustInfo] = useState(false);
+  const [savingAdjust, setSavingAdjust] = useState(false);
   const [announcements, setAnnouncements] = useState([]);
   const [publications, setPublications] = useState([]);
   const [areas, setAreas] = useState([]);
@@ -228,6 +234,37 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
       if (res.ok) { setReadingPlans(prev => prev.filter(p => p.id !== id)); showNotification('Plano removido.'); }
       else showNotification('Falha ao remover o plano.');
     } catch { showNotification('Falha de rede.'); }
+  };
+
+  // Ajustar contagem de leitura de um membro específico (persiste ReadingLog + bibleStreak + pontos)
+  const loadAdjustInfo = async (userId) => {
+    setAdjustUserId(userId);
+    setAdjustInfo(null);
+    setAdjustNewCount('');
+    if (!userId) return;
+    setLoadingAdjustInfo(true);
+    try {
+      const res = await apiFetch(`/api/admin/reading/${userId}`);
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { setAdjustInfo(data); setAdjustNewCount(String(data.count)); }
+      else showNotification(data.error || 'Não foi possível carregar o membro.');
+    } catch { showNotification('Falha de rede.'); }
+    finally { setLoadingAdjustInfo(false); }
+  };
+
+  const handleSaveAdjust = async () => {
+    const newCount = Number(adjustNewCount);
+    if (!adjustUserId || Number.isNaN(newCount) || newCount < 0) return;
+    setSavingAdjust(true);
+    try {
+      const res = await apiFetch('/api/admin/reading/adjust', { method: 'POST', body: { userId: adjustUserId, newCount } });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setAdjustInfo({ user: data.user, count: data.newCount });
+        showNotification(`Contagem atualizada: ${data.oldCount} → ${data.newCount} dias (${data.pointsDelta >= 0 ? '+' : ''}${data.pointsDelta} pontos).`);
+      } else showNotification(data.error || 'Falha ao ajustar a contagem.');
+    } catch { showNotification('Falha de rede ao ajustar.'); }
+    finally { setSavingAdjust(false); }
   };
 
   const openGroupDetail = async (groupId) => {
@@ -1010,6 +1047,36 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                 <button onClick={() => openPlanEditor(null)} className="bg-brand-primary text-white px-4 py-2 rounded-md font-bold text-sm flex gap-2 items-center outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
                   <Plus className="w-4 h-4"/> Novo Plano
                 </button>
+              </div>
+
+              <div className="bg-surface-card border border-orange-500/20 rounded-default p-5 shadow-level-2">
+                <h3 className="text-base font-bold text-text-primary flex items-center gap-2 mb-1"><Flame className="w-5 h-5 text-orange-400"/> Ajustar Contagem de Leitura</h3>
+                <p className="text-xs text-text-muted mb-4">Aumente ou diminua os dias de leitura de um membro — atualiza a sequência, o ranking e os pontos, salvando direto no banco.</p>
+                <select value={adjustUserId} onChange={e => loadAdjustInfo(e.target.value)} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 mb-3">
+                  <option value="">Selecione um membro...</option>
+                  {allUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                </select>
+                {loadingAdjustInfo ? (
+                  <div className="flex justify-center py-4"><div className="w-6 h-6 border-2 border-brand-primary border-t-transparent rounded-full animate-spin"></div></div>
+                ) : adjustInfo && (
+                  <div className="bg-surface-dark border border-white/10 rounded-md p-4 space-y-3">
+                    <div className="flex justify-between text-sm">
+                      <span className="text-text-muted">Sequência atual</span>
+                      <span className="text-white font-bold flex items-center gap-1"><Flame className="w-4 h-4 text-orange-400"/> {adjustInfo.count} dias</span>
+                    </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-text-muted">Pontos atuais</span>
+                      <span className="text-white font-bold">{adjustInfo.user.points}</span>
+                    </div>
+                    <div className="flex items-center gap-2 pt-2 border-t border-white/10">
+                      <label className="text-xs text-text-muted shrink-0">Nova contagem</label>
+                      <input type="number" min="0" max="400" value={adjustNewCount} onChange={e => setAdjustNewCount(e.target.value)} className="flex-1 bg-surface-card border border-white/10 rounded-md px-3 py-2 text-white text-center font-bold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"/>
+                      <button onClick={handleSaveAdjust} disabled={savingAdjust} className="bg-orange-500 hover:bg-orange-400 text-white px-4 py-2 rounded-md font-bold text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 disabled:opacity-50 flex items-center gap-2 shrink-0">
+                        {savingAdjust ? <Loader2 className="w-4 h-4 animate-spin"/> : <Save className="w-4 h-4"/>} Salvar
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
 
               {readingPlans.length === 0 ? (
