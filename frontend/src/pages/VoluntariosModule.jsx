@@ -441,7 +441,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
           ) : areas.length === 0 ? (
             <div className="text-center text-text-muted py-10 bg-surface-card rounded-default border border-dashed border-white/10">Nenhuma área cadastrada ainda. Peça ao Admin para criar áreas de voluntariado.</div>
           ) : (
-          <div className="grid gap-4 md:grid-cols-2">
+          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
             {areas.map(area => {
               // Líder não solicita entrada na própria área (já aparece em "Minhas Áreas")
               if (area.leaderId === user?.id) return null;
@@ -449,27 +449,24 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
               const myParticipation = myAreas.find(m => m.areaId === area.id);
               const disableRequest  = reachedAreaLimit && !myParticipation;
               return (
-                <div key={area.id} className="bg-surface-card p-5 rounded-default border border-white/5 shadow-level-2 flex flex-col justify-between">
-                  <div>
-                    <div className="flex items-center gap-3 mb-3">
-                      <div className={`w-10 h-10 rounded-full flex items-center justify-center ${bg} ${color}`}><Icon className="w-5 h-5"/></div>
-                      <h3 className="font-display font-bold text-lg text-text-primary">{area.name}</h3>
-                    </div>
-                    <p className="text-sm text-text-muted mb-4">{area.description}</p>
+                <div key={area.id} className="bg-surface-card p-3 rounded-default border border-white/5 shadow-level-2 flex flex-col gap-2 hover:border-brand-primary/30 transition-colors">
+                  <div className="flex items-center gap-2">
+                    <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${bg} ${color}`}><Icon className="w-4 h-4"/></div>
+                    <h3 className="font-display font-bold text-sm text-text-primary leading-tight line-clamp-2">{area.name}</h3>
                   </div>
+                  {area.description && <p className="text-[11px] text-text-muted line-clamp-2">{area.description}</p>}
 
                   {myParticipation ? (
-                    <div className="flex flex-col gap-2 mt-2">
-                      <button disabled className="w-full py-2.5 rounded-default text-sm font-semibold bg-surface-dark border border-white/5 text-text-muted/50 cursor-not-allowed flex justify-center items-center gap-2">
-                        <CheckCircle className="w-4 h-4"/>
-                        {myParticipation.status === 'APROVADO' ? 'Participando' : 'Solicitação Pendente'}
-                      </button>
-                      {/* FIX: chama requestCancelArea que abre o modal interno */}
+                    <div className="flex items-center gap-1 mt-auto pt-1">
+                      <span className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md text-[10px] font-semibold bg-surface-dark border border-white/5 text-text-muted/70 text-center">
+                        <CheckCircle className="w-3 h-3 shrink-0"/> {myParticipation.status === 'APROVADO' ? 'Participando' : 'Pendente'}
+                      </span>
                       <button
                         onClick={() => requestCancelArea(myParticipation)}
-                        className="text-xs text-text-muted hover:text-red-400 underline decoration-white/10 hover:decoration-red-400/30 underline-offset-2 text-center transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"
+                        title="Cancelar solicitação"
+                        className="shrink-0 p-1.5 rounded-md text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"
                       >
-                        Cancelar solicitação
+                        <X className="w-3.5 h-3.5"/>
                       </button>
                     </div>
                   ) : (
@@ -477,9 +474,9 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                       onClick={() => handleRequestArea(area.id)}
                       disabled={disableRequest}
                       title={disableRequest ? `Limite de ${MAX_AREAS_PER_PERSON} áreas atingido` : undefined}
-                      className="w-full mt-2 py-2.5 rounded-default text-sm font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 bg-surface-dark border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="w-full mt-auto py-1.5 rounded-md text-[11px] font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 bg-surface-dark border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-white disabled:opacity-50 disabled:cursor-not-allowed"
                     >
-                      Solicitar Entrada
+                      Solicitar
                     </button>
                   )}
                 </div>

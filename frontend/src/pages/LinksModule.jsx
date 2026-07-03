@@ -446,9 +446,9 @@ const LinksModule = ({ user, showNotification }) => {
           ) : links.length === 0 ? (
             <div className="bg-surface-card p-10 rounded-default border border-white/5 text-center text-text-muted">Nenhum Link cadastrado na plataforma ainda.</div>
           ) : (
-            <div className="grid gap-4 md:grid-cols-2">
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-3">
               {links.map(link => {
-                const status = myParticipations[link.id]; 
+                const status = myParticipations[link.id];
                 const isApproved = status === 'APROVADO';
                 const isPending = status === 'PENDENTE';
                 const isLeader = link.leaderId === user?.id;
@@ -457,22 +457,20 @@ const LinksModule = ({ user, showNotification }) => {
                 if (isApproved || isLeader) return null;
 
                 return (
-                  <div key={link.id} className={`bg-surface-card p-5 rounded-default border transition-all flex flex-col justify-between group shadow-level-2 hover:border-brand-primary/30 transition-all`}>
-                    <div>
-                      <h3 className="font-display font-bold text-lg text-text-primary">{link.name}</h3>
-                      <div className="text-sm text-text-muted font-medium mt-1 mb-4">Líder: {link.leader?.name || 'Sem líder'}</div>
-                      <div className="flex items-center gap-2 text-sm text-text-muted mb-6 bg-surface-dark/50 p-2.5 rounded-default border border-white/5">
-                        <Clock className="w-4 h-4 text-brand-primary"/> <span className="font-medium">{link.day}, às {link.time}</span>
-                      </div>
+                  <div key={link.id} className="bg-surface-card p-3 rounded-default border border-white/5 shadow-level-2 flex flex-col gap-2 hover:border-brand-primary/30 transition-colors">
+                    <h3 className="font-display font-bold text-sm text-text-primary leading-tight line-clamp-2">{link.name}</h3>
+                    <div className="text-[11px] text-text-muted truncate">Líder: {link.leader?.name || 'Sem líder'}</div>
+                    <div className="flex items-center gap-1.5 text-[11px] text-text-muted bg-surface-dark/50 px-2 py-1 rounded-md border border-white/5">
+                      <Clock className="w-3 h-3 text-brand-primary shrink-0"/> <span className="truncate">{link.day}, {link.time}</span>
                     </div>
-                    
+
                     {isPending ? (
-                      <div className="space-y-2">
-                        <button disabled className="w-full bg-surface-dark border border-amber-500/30 text-amber-400 py-2.5 rounded-default text-sm font-semibold cursor-not-allowed flex items-center justify-center gap-1.5"><Clock className="w-4 h-4"/> Pendente</button>
-                        <button onClick={() => requestCancelParticipation(link)} className="w-full bg-transparent border border-red-500/20 text-red-400/80 py-2 rounded-default text-xs font-semibold hover:bg-red-500/10 hover:text-red-400 transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Cancelar Solicitação</button>
+                      <div className="flex items-center gap-1 mt-auto">
+                        <span className="flex-1 flex items-center justify-center gap-1 py-1.5 rounded-md text-[10px] font-semibold bg-surface-dark border border-amber-500/30 text-amber-400"><Clock className="w-3 h-3 shrink-0"/> Pendente</span>
+                        <button onClick={() => requestCancelParticipation(link)} title="Cancelar solicitação" className="shrink-0 p-1.5 rounded-md text-text-muted hover:text-red-400 hover:bg-red-500/10 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-3.5 h-3.5"/></button>
                       </div>
                     ) : (
-                      <button onClick={() => handleRequestParticipation(link)} disabled={disableRequest} className={`w-full py-2.5 rounded-default text-sm font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${disableRequest ? 'bg-surface-dark border border-white/5 text-text-muted/50 cursor-not-allowed' : 'bg-surface-dark border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-white'}`}>Solicitar Entrada</button>
+                      <button onClick={() => handleRequestParticipation(link)} disabled={disableRequest} className={`w-full mt-auto py-1.5 rounded-md text-[11px] font-semibold transition-all outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${disableRequest ? 'bg-surface-dark border border-white/5 text-text-muted/50 cursor-not-allowed' : 'bg-surface-dark border border-brand-primary/30 text-brand-primary hover:bg-brand-primary hover:text-white'}`}>Solicitar</button>
                     )}
                   </div>
                 );
