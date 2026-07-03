@@ -1,6 +1,6 @@
 import React, { useState, useEffect, Suspense, lazy } from 'react';
 import { apiFetch } from '../api';
-import { Award, BookOpen, Calendar, Clock, CheckCircle, ChevronLeft, ChevronRight, CalendarDays, Megaphone, Heart, MessageSquare, Flame, Camera, X, Loader2, Trophy, Sparkles, Music } from 'lucide-react';
+import { Award, BookOpen, Calendar, Clock, CheckCircle, ChevronLeft, ChevronRight, CalendarDays, Megaphone, Heart, MessageSquare, Flame, Camera, X, Loader2, Trophy, Music } from 'lucide-react';
 import GroupsPanel from './GroupsPanel';
 const QrScanner = lazy(() => import('../components/QrScanner'));
 import { compressImage, fileToDataUrl } from '../utils/image';
@@ -31,11 +31,6 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
   const [calendarDate, setCalendarDate] = useState(new Date());
   const [rsvpEvents, setRsvpEvents] = useState([]); // refIds com presença confirmada (RSVP)
   const [checkedInEvents, setCheckedInEvents] = useState([]); // refIds com check-in real feito
-  // Simulador do Plano Bíblico
-  const [pointRules, setPointRules] = useState([]);
-  const [showSimulator, setShowSimulator] = useState(false);
-  const [simDays, setSimDays] = useState(30);
-  const [simWithPhoto, setSimWithPhoto] = useState(true);
   // Pedido de oração
   const [prayerOpen, setPrayerOpen] = useState(false);
   const [prayerText, setPrayerText] = useState('');
@@ -44,14 +39,13 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
   useEffect(() => {
     const fetchDashboardData = async () => {
       try {
-        const [resEvents, resShifts, resAnn, resPubs, resReading, resParts, resRules] = await Promise.all([
+        const [resEvents, resShifts, resAnn, resPubs, resReading, resParts] = await Promise.all([
           apiFetch('/api/events?type=GERAL').catch(() => null),
           apiFetch(`/api/shifts?userId=${user?.id}`).catch(() => null),
           apiFetch('/api/announcements?type=GERAL').catch(() => null),
           apiFetch('/api/publications').catch(() => null),
           apiFetch('/api/reading/me').catch(() => null),
-          apiFetch('/api/events/my-participations').catch(() => null),
-          apiFetch('/api/point-rules').catch(() => null)
+          apiFetch('/api/events/my-participations').catch(() => null)
         ]);
         if (resEvents && resEvents.ok) setEvents(await resEvents.json());
         if (resShifts && resShifts.ok) setShifts(await resShifts.json());
@@ -63,7 +57,6 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
           setRsvpEvents(parts.map(p => p.refId));
           setCheckedInEvents(parts.filter(p => p.checkedInAt).map(p => p.refId));
         }
-        if (resRules && resRules.ok) setPointRules(await resRules.json());
       } catch (error) {} finally { setIsLoading(false); }
     };
     fetchDashboardData();
@@ -92,18 +85,6 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
 
   // Nível de fogo = quantos marcos já foram atingidos (0..5)
   const fireLevel = reading ? (reading.milestones || []).filter(m => reading.count >= m).length : 0;
-
-  // ─── Simulador do Plano Bíblico: usa os mesmos valores de pontuação configurados no Admin ──
-  const ruleByKey = Object.fromEntries(pointRules.map(r => [r.key, r.points]));
-  const simDailyPts = simWithPhoto ? (ruleByKey.BIBLE_DAILY_READ ?? 15) : (ruleByKey.BIBLE_DAILY_NOPHOTO ?? 5);
-  const simStartCount = reading?.count || 0;
-  const simMilestones = reading?.milestones || [10, 20, 30, 45, 60];
-  const simEndCount = simStartCount + simDays;
-  const simMilestonesReached = simMilestones.filter(m => m > simStartCount && m <= simEndCount);
-  const simMilestoneBonus = simMilestonesReached.reduce((sum, m) => sum + (ruleByKey[`BIBLE_MILESTONE_${m}`] ?? 0), 0);
-  const simDailyTotal = simDailyPts * simDays;
-  const simTotalPoints = simDailyTotal + simMilestoneBonus;
-  const simNextMilestone = simMilestones.find(m => m > simEndCount);
 
   const handleReadingPhoto = async (e) => {
     const file = e.target.files[0];
@@ -328,7 +309,6 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
           )}
           <button onClick={openReadingText} className="sm:w-auto bg-surface-dark border border-white/10 text-white py-2.5 px-4 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-white/5"><BookOpen className="w-4 h-4"/> Ler agora</button>
           <button onClick={() => setShowGroups(true)} className="sm:w-auto bg-surface-dark border border-orange-500/30 text-orange-300 py-2.5 px-4 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-orange-500/10"><Trophy className="w-4 h-4"/> Grupos</button>
-          <button onClick={() => setShowSimulator(true)} className="sm:w-auto bg-surface-dark border border-orange-500/30 text-orange-300 py-2.5 px-4 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-orange-500/10"><Sparkles className="w-4 h-4"/> Simular</button>
           {reading?.spotifyUrl && (
             <a href={reading.spotifyUrl} target="_blank" rel="noopener noreferrer" className="sm:w-auto bg-surface-dark border border-emerald-500/30 text-emerald-300 py-2.5 px-4 rounded-default font-bold flex items-center justify-center gap-2 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 hover:bg-emerald-500/10"><Music className="w-4 h-4"/> Ouvir no Spotify</a>
           )}
@@ -605,74 +585,6 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
       )}
 
       {showGroups && <GroupsPanel user={user} showNotification={showNotification} onClose={() => setShowGroups(false)} />}
-
-      {/* Simulador do Plano Bíblico: prevê marcos e pontos a partir da sequência atual */}
-      {showSimulator && (
-        <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-200" onClick={() => setShowSimulator(false)}>
-          <div className="bg-surface-card border border-white/10 p-6 rounded-2xl shadow-2xl max-w-sm w-full animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
-            <div className="flex justify-between items-center mb-1">
-              <h3 className="text-lg font-bold text-text-primary flex items-center gap-2"><Sparkles className="w-5 h-5 text-orange-400"/> Simulador de Leitura</h3>
-              <button onClick={() => setShowSimulator(false)} aria-label="Fechar" className="text-text-muted hover:text-white outline-none"><X className="w-5 h-5"/></button>
-            </div>
-            <p className="text-xs text-text-muted mb-5">Você está em {simStartCount} {simStartCount === 1 ? 'dia' : 'dias'}. Veja como ficam seus marcos e pontos se continuar lendo.</p>
-
-            <div className="mb-4">
-              <div className="flex justify-between items-center mb-2">
-                <label className="text-sm font-semibold text-white">Mais dias seguidos</label>
-                <span className="text-orange-400 font-bold text-sm">+{simDays} {simDays === 1 ? 'dia' : 'dias'}</span>
-              </div>
-              <input type="range" min="1" max="90" value={simDays} onChange={e => setSimDays(Number(e.target.value))} className="w-full accent-orange-500" />
-            </div>
-
-            <div className="flex gap-2 mb-5">
-              <button onClick={() => setSimWithPhoto(true)} className={`flex-1 py-2 rounded-md text-xs font-bold border transition-colors ${simWithPhoto ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-surface-dark border-white/10 text-text-muted'}`}>
-                Com foto (+{ruleByKey.BIBLE_DAILY_READ ?? 15}/dia)
-              </button>
-              <button onClick={() => setSimWithPhoto(false)} className={`flex-1 py-2 rounded-md text-xs font-bold border transition-colors ${!simWithPhoto ? 'bg-orange-500/20 border-orange-500/40 text-orange-300' : 'bg-surface-dark border-white/10 text-text-muted'}`}>
-                Sem foto (+{ruleByKey.BIBLE_DAILY_NOPHOTO ?? 5}/dia)
-              </button>
-            </div>
-
-            <div className="bg-surface-dark border border-white/10 rounded-default p-4 space-y-3">
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-text-muted">Sequência final</span>
-                <span className="text-white font-bold flex items-center gap-1"><Flame className="w-4 h-4 text-orange-400"/> {simEndCount} dias</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-text-muted">Pontos da leitura diária</span>
-                <span className="text-white font-bold">+{simDailyTotal}</span>
-              </div>
-              <div className="flex justify-between items-center">
-                <span className="text-sm text-text-muted">Bônus de marcos</span>
-                <span className="text-white font-bold">+{simMilestoneBonus}</span>
-              </div>
-              <div className="flex justify-between items-center pt-2 border-t border-white/10">
-                <span className="text-sm font-bold text-white">Total simulado</span>
-                <span className="text-orange-400 font-bold text-lg">+{simTotalPoints} pts</span>
-              </div>
-            </div>
-
-            {simMilestonesReached.length > 0 ? (
-              <div className="mt-4">
-                <h4 className="text-xs font-bold uppercase tracking-wider text-text-muted mb-2">Marcos que você vai atingir</h4>
-                <div className="flex flex-wrap gap-1.5">
-                  {simMilestonesReached.map(m => (
-                    <span key={m} className="text-xs font-bold bg-orange-500/15 border border-orange-500/30 text-orange-300 px-2.5 py-1 rounded-full flex items-center gap-1">
-                      <Flame className="w-3 h-3"/> {m} dias (+{ruleByKey[`BIBLE_MILESTONE_${m}`] ?? 0})
-                    </span>
-                  ))}
-                </div>
-              </div>
-            ) : (
-              <p className="text-xs text-text-muted mt-4 text-center italic">Nenhum novo marco nesse intervalo.</p>
-            )}
-
-            {simNextMilestone && (
-              <p className="text-xs text-text-muted mt-3 text-center">Faltariam mais {simNextMilestone - simEndCount} dias para o marco de {simNextMilestone} 🔥</p>
-            )}
-          </div>
-        </div>
-      )}
     </div>
   );
 };
