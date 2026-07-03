@@ -997,6 +997,23 @@ app.get('/api/reading/me', h(async (req, res) => {
   });
 }));
 
+// Ranking geral de leitura (todos os usuários com alguma leitura registrada) — visível a qualquer membro
+app.get('/api/reading/ranking', h(async (req, res) => {
+  const readers = await prisma.readingLog.findMany({ distinct: ['userId'], select: { userId: true } });
+  const userIds = readers.map(r => r.userId);
+  if (userIds.length === 0) return res.json([]);
+  const [users, groupRows] = await Promise.all([
+    prisma.user.findMany({ where: { id: { in: userIds } }, select: { id: true, name: true, profileImage: true, bibleStreak: true, points: true } }),
+    prisma.groupMember.findMany({ where: { userId: { in: userIds }, status: 'ATIVO' }, include: { group: { select: { name: true } } } }),
+  ]);
+  const groupNameById: Record<string, string> = {};
+  for (const gm of groupRows) if (!groupNameById[gm.userId]) groupNameById[gm.userId] = gm.group.name;
+  const ranking = users
+    .map(u => ({ ...u, groupName: groupNameById[u.id] || null }))
+    .sort((a, b) => (b.bibleStreak - a.bibleStreak) || (b.points - a.points));
+  res.json(ranking);
+}));
+
 // Texto da leitura do dia (para ler no app) — dataset local ACF, sem dependência externa
 app.get('/api/reading/text', h(async (req, res) => {
   const day = req.query.day ? Math.min(Math.max(parseInt(String(req.query.day), 10) || 1, 1), READING_PLAN.length) : currentPlanDay();
@@ -1275,6 +1292,24 @@ app.get('/api/admin/stats', staffOnly,h(async (req, res) => {
     pointsInCirculation: ptsAgg._sum.points || 0,
     pointsSpent: spentAgg._sum.cost || 0,
   });
+}));
+
+// Admin: visão geral dos grupos de leitura (andamento, ranking interno resumido, nº de pessoas)
+app.get('/api/admin/groups-overview', staffOnly, h(async (req, res) => {
+  const groups = await prisma.readingGroup.findMany({
+    include: { owner: { select: userPublic }, members: { where: { status: 'ATIVO' }, include: { user: { select: userPublic } } } },
+    orderBy: { createdAt: 'desc' },
+  });
+  const overview = groups.map(g => {
+    const members = g.members.map(m => m.user).sort((a, b) => (b.bibleStreak - a.bibleStreak) || (b.points - a.points));
+    const avgStreak = members.length ? Math.round(members.reduce((s, u) => s + u.bibleStreak, 0) / members.length) : 0;
+    return {
+      id: g.id, name: g.name, description: g.description, owner: g.owner,
+      memberCount: members.length, avgStreak,
+      topReader: members[0] ? { id: members[0].id, name: members[0].name, bibleStreak: members[0].bibleStreak } : null,
+    };
+  });
+  res.json(overview);
 }));
 
 // ─── Middleware de erro (try/catch central) ────────────────────────────────

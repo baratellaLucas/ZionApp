@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { compressImage, fileToDataUrl } from '../utils/image';
 import { AREA_ICON_CATALOG, getAreaIconComponent } from '../utils/areaIcons';
-import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Users, Eye, Briefcase, Gift, Ticket, Tag, CheckCircle, Zap, BarChart3, BookOpen, Award, QrCode, Bug } from 'lucide-react';
+import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Users, Eye, Briefcase, Gift, Ticket, Tag, CheckCircle, Zap, BarChart3, BookOpen, Award, QrCode, Bug, Trophy, Flame } from 'lucide-react';
 
 // Locais pré-definidos para eventos (menu de seleção); "Outro" libera um campo de texto livre.
 const EVENT_LOCATIONS = ['Campus Zion RP', 'Templo Principal', 'Auditório', 'Sala de Reuniões', 'Keola Coffee', 'Área Externa', 'Online', 'A definir'];
@@ -15,6 +15,10 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   const [links, setLinks] = useState([]);
   const [events, setEvents] = useState([]);
   const [eventStats, setEventStats] = useState({}); // { eventId: { rsvpCount, checkinCount } }
+  const [groupsOverview, setGroupsOverview] = useState([]); // visão geral (Admin > Grupos)
+  const [generalRanking, setGeneralRanking] = useState([]); // ranking geral de leitura (todos os usuários)
+  const [selectedGroupDetail, setSelectedGroupDetail] = useState(null); // grupo aberto para detalhe
+  const [loadingGroupDetail, setLoadingGroupDetail] = useState(false);
   const [announcements, setAnnouncements] = useState([]);
   const [publications, setPublications] = useState([]);
   const [areas, setAreas] = useState([]);
@@ -154,6 +158,32 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   };
 
   useEffect(() => { fetchAdminData(); }, []);
+
+  // Grupos de Leitura (Admin): carrega visão geral + ranking geral só quando a aba é aberta
+  useEffect(() => {
+    if (activeTab !== 'grupos') return;
+    (async () => {
+      try {
+        const [resOverview, resRanking] = await Promise.all([
+          apiFetch('/api/admin/groups-overview').catch(() => null),
+          apiFetch('/api/reading/ranking').catch(() => null),
+        ]);
+        if (resOverview?.ok) setGroupsOverview(await resOverview.json());
+        if (resRanking?.ok) setGeneralRanking(await resRanking.json());
+      } catch (e) {}
+    })();
+  }, [activeTab]);
+
+  const openGroupDetail = async (groupId) => {
+    setLoadingGroupDetail(true);
+    setSelectedGroupDetail({ id: groupId });
+    try {
+      const res = await apiFetch(`/api/groups/${groupId}`);
+      if (res.ok) setSelectedGroupDetail(await res.json());
+      else { setSelectedGroupDetail(null); showNotification('Não foi possível carregar o grupo.'); }
+    } catch { setSelectedGroupDetail(null); showNotification('Falha de rede ao carregar o grupo.'); }
+    finally { setLoadingGroupDetail(false); }
+  };
 
   const formatDatePT = (isoString) => {
     if (!isoString) return '';
@@ -450,6 +480,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
         <button onClick={() => setActiveTab('mural_geral')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'mural_geral' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><MessageSquare className="w-4 h-4"/> Mural Geral</button>
         <button onClick={() => setActiveTab('loja')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'loja' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Gift className="w-4 h-4"/> Loja</button>
         <button onClick={() => setActiveTab('gamificacao')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'gamificacao' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Zap className="w-4 h-4"/> Gamificação</button>
+        <button onClick={() => setActiveTab('grupos')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'grupos' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><BookOpen className="w-4 h-4"/> Grupos</button>
         <button onClick={() => setActiveTab('membros')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'membros' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Users className="w-4 h-4"/> Membros</button>
         {user.role === 'ADMIN' && <button onClick={() => setActiveTab('cargos')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'cargos' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><ShieldCheck className="w-4 h-4"/> Cargos</button>}
         <button onClick={() => setActiveTab('bugs')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'bugs' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Bug className="w-4 h-4"/> Bugs</button>
@@ -788,6 +819,111 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* ─── GRUPOS DE LEITURA ─── */}
+          {activeTab === 'grupos' && (
+            <div className="space-y-6">
+              <div>
+                <h3 className="text-lg font-bold text-text-primary mb-3 flex items-center gap-2"><Users className="w-5 h-5 text-brand-primary"/> Grupos de Leitura ({groupsOverview.length})</h3>
+                {groupsOverview.length === 0 ? (
+                  <div className="text-center text-text-muted py-8 bg-surface-card rounded-default border border-dashed border-white/10">Nenhum grupo de leitura criado ainda.</div>
+                ) : (
+                  <div className="grid gap-3">
+                    {groupsOverview.map(g => (
+                      <button key={g.id} onClick={() => openGroupDetail(g.id)} className="text-left bg-surface-card border border-white/5 hover:border-brand-primary/40 p-4 rounded-default flex flex-col sm:flex-row justify-between sm:items-center gap-3 transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                        <div>
+                          <div className="font-bold text-white">{g.name}</div>
+                          <div className="text-xs text-text-muted mt-0.5">Líder: {g.owner?.name || '—'}</div>
+                        </div>
+                        <div className="flex items-center gap-4 text-sm">
+                          <span className="flex items-center gap-1.5 text-text-muted"><Users className="w-4 h-4"/> {g.memberCount} membros</span>
+                          <span className="flex items-center gap-1.5 text-amber-400"><Flame className="w-4 h-4"/> {g.avgStreak} dias (média)</span>
+                          {g.topReader && <span className="flex items-center gap-1.5 text-brand-primary"><Trophy className="w-4 h-4"/> {g.topReader.name}</span>}
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              <div className="border-t border-white/10 pt-6">
+                <h3 className="text-lg font-bold text-text-primary mb-3 flex items-center gap-2"><Trophy className="w-5 h-5 text-amber-400"/> Ranking Geral de Leitura</h3>
+                {generalRanking.length === 0 ? (
+                  <div className="text-center text-text-muted py-8 bg-surface-card rounded-default border border-dashed border-white/10">Ninguém registrou leituras ainda.</div>
+                ) : (
+                  <div className="bg-surface-card border border-white/5 rounded-default divide-y divide-white/5 max-h-96 overflow-y-auto">
+                    {generalRanking.map((u, idx) => (
+                      <div key={u.id} className="flex items-center justify-between px-4 py-2.5">
+                        <div className="flex items-center gap-3 min-w-0">
+                          <span className={`w-6 text-center font-bold text-sm shrink-0 ${idx === 0 ? 'text-amber-400' : idx === 1 ? 'text-slate-300' : idx === 2 ? 'text-orange-400' : 'text-text-muted'}`}>{idx + 1}º</span>
+                          <div className="min-w-0">
+                            <div className="text-sm font-semibold text-white truncate">{u.name}</div>
+                            {u.groupName && <div className="text-xs text-text-muted truncate">{u.groupName}</div>}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-3 text-xs shrink-0">
+                          <span className="flex items-center gap-1 text-amber-400 font-semibold"><Flame className="w-3.5 h-3.5"/> {u.bibleStreak}</span>
+                          <span className="flex items-center gap-1 text-brand-primary font-semibold"><Zap className="w-3.5 h-3.5"/> {u.points}</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Modal de detalhe do grupo */}
+              {selectedGroupDetail && (
+                <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-200" onClick={() => setSelectedGroupDetail(null)}>
+                  <div className="bg-surface-card border border-white/10 rounded-2xl shadow-2xl max-w-lg w-full max-h-[85vh] overflow-y-auto p-6 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+                    <div className="flex justify-between items-start mb-4">
+                      <div>
+                        <h3 className="text-xl font-bold text-text-primary">{selectedGroupDetail.name || 'Carregando...'}</h3>
+                        {selectedGroupDetail.description && <p className="text-sm text-text-muted mt-1">{selectedGroupDetail.description}</p>}
+                      </div>
+                      <button onClick={() => setSelectedGroupDetail(null)} className="p-1.5 text-text-muted hover:text-white outline-none"><X className="w-5 h-5"/></button>
+                    </div>
+                    {loadingGroupDetail ? (
+                      <div className="flex justify-center py-8"><div className="w-6 h-6 border-2 border-brand-primary border-t-transparent rounded-full animate-spin"></div></div>
+                    ) : (
+                      <div className="space-y-5">
+                        <div>
+                          <h4 className="text-sm font-bold text-text-primary mb-2 flex items-center gap-2"><Trophy className="w-4 h-4 text-amber-400"/> Ranking do Grupo</h4>
+                          <div className="space-y-1.5">
+                            {(selectedGroupDetail.ranking || []).map((u, idx) => (
+                              <div key={u.id} className="flex items-center justify-between bg-surface-dark px-3 py-2 rounded-md text-sm">
+                                <span className="text-white">{idx + 1}º {u.name}</span>
+                                <span className="flex items-center gap-1 text-amber-400 font-semibold"><Flame className="w-3.5 h-3.5"/> {u.bibleStreak}</span>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                        {(selectedGroupDetail.pending || []).length > 0 && (
+                          <div>
+                            <h4 className="text-sm font-bold text-text-primary mb-2">Convites Pendentes</h4>
+                            <div className="flex flex-wrap gap-1.5">
+                              {selectedGroupDetail.pending.map(p => <span key={p.id} className="text-xs bg-surface-dark border border-white/10 px-2 py-1 rounded-full text-text-muted">{p.name}</span>)}
+                            </div>
+                          </div>
+                        )}
+                        <div>
+                          <h4 className="text-sm font-bold text-text-primary mb-2">Atividade Recente</h4>
+                          {(selectedGroupDetail.feed || []).length === 0 ? (
+                            <p className="text-xs text-text-muted italic">Sem leituras registradas recentemente.</p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {selectedGroupDetail.feed.slice(0, 8).map(f => (
+                                <div key={f.id} className="text-xs text-text-muted"><span className="text-white font-semibold">{f.name}</span> leu {f.reference}</div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
           )}
 
