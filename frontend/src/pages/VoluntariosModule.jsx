@@ -573,6 +573,11 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     const d = new Date(ev.date);
     const weekday = d.getDay();
     const period = periodFromHour(d.getHours());
+    // Pré-preenche data e horário da escala com os do evento selecionado
+    const dateOnly = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const roundedMinutes = d.getMinutes() < 30 ? '00' : '30';
+    const timeOnly = `${String(d.getHours()).padStart(2, '0')}:${roundedMinutes}`;
+    setDraft(areaId, { dateOnly, timeOnly });
     try {
       const res = await apiFetch(`/api/areas/${areaId}/availability?weekday=${weekday}&period=${period}`).catch(() => null);
       if (res && res.ok) {
