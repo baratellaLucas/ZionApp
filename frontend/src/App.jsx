@@ -1,11 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Home, Users, Briefcase, ShieldCheck, Bell, Award, User, Check, Camera, AlertTriangle, X, LogOut, Loader2, Gift, Flame, BookOpen, Trophy, Calendar, GraduationCap, Bug, Lightbulb, Send } from 'lucide-react';
+import { Home, Users, Briefcase, ShieldCheck, Bell, Award, User, Check, Camera, AlertTriangle, X, LogOut, Loader2, Gift, Flame, BookOpen, Trophy, Calendar, GraduationCap, Bug, Lightbulb, Send, Heart } from 'lucide-react';
 
 import MembrosModule from './pages/MembrosModule';
 import LinksModule from './pages/LinksModule';
 import VoluntariosModule from './pages/VoluntariosModule';
 import AdminModule from './pages/AdminModule';
 import RewardsModule from './pages/RewardsModule';
+import PrayerModule from './pages/PrayerModule';
 import Login from './pages/Login';
 import Avatar from './components/Avatar';
 import { apiFetch, API_URL, getToken, setToken, clearToken, setUnauthorizedHandler, getStoredOriginalToken, storeOriginalToken } from './api';
@@ -36,6 +37,7 @@ export default function App() {
   const [fbSending, setFbSending] = useState(false);
   const [profileStats, setProfileStats] = useState(null);
   const [navIntent, setNavIntent] = useState(null); // ação a executar no módulo de destino (ex: 'reading', 'groups', 'escala')
+  const [canViewPrayers, setCanViewPrayers] = useState(false); // acesso liberado (individual ou por cargo) aos pedidos de oração
 
   const [editName, setEditName] = useState('');
   const [editImage, setEditImage] = useState(null);
@@ -85,6 +87,15 @@ export default function App() {
     };
     restore();
   }, []);
+
+  // Acesso a Pedidos de Oração (individual ou por cargo) — define se a aba "Oração" aparece
+  useEffect(() => {
+    if (!user?.id) { setCanViewPrayers(false); return; }
+    apiFetch('/api/prayer-requests/access')
+      .then(res => res.ok ? res.json() : { canView: false })
+      .then(data => setCanViewPrayers(!!data.canView))
+      .catch(() => setCanViewPrayers(false));
+  }, [user?.id]);
 
   // Check-in por QR (deep link): ?checkin=<eventId>&code=<code>
   // Vai para o Início e delega o check-in ao MembrosModule (que confirma presença e atualiza card + calendário).
@@ -300,10 +311,16 @@ export default function App() {
     { id: 'links', label: 'Links', icon: Users, component: LinksModule },
     { id: 'voluntarios', label: 'Voluntários', icon: Briefcase, component: VoluntariosModule },
     { id: 'loja', label: 'Loja', icon: Gift, component: RewardsModule },
+    // Aba própria só para quem não é staff mas recebeu acesso individual/por cargo (staff usa Admin > Oração)
+    { id: 'oracao', label: 'Oração', icon: Heart, component: PrayerModule, requiresPrayerAccess: true },
     { id: 'admin', label: 'Admin', icon: ShieldCheck, component: AdminModule, hideForMember: true },
   ];
 
-  const visibleTabs = tabs.filter(tab => !(tab.hideForMember && !isStaffRole(user.role)));
+  const visibleTabs = tabs.filter(tab => {
+    if (tab.hideForMember && !isStaffRole(user.role)) return false;
+    if (tab.requiresPrayerAccess && (isStaffRole(user.role) || !canViewPrayers)) return false;
+    return true;
+  });
   const ActiveComponent = tabs.find(t => t.id === activeTab)?.component || MembrosModule;
 
   return (

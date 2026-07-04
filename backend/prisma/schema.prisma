@@ -24,6 +24,7 @@ model User {
   canManageLinks Boolean  @default(false)
   canManageAreas Boolean  @default(false)
   canManageStore Boolean  @default(false)
+  prayerAccess   Boolean  @default(false) // acesso individual liberado (Admin > Membros) aos pedidos de oração
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 

@@ -2,7 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { compressImage, fileToDataUrl } from '../utils/image';
 import { AREA_ICON_CATALOG, getAreaIconComponent } from '../utils/areaIcons';
-import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Users, Eye, Briefcase, Gift, Ticket, Tag, CheckCircle, Zap, BarChart3, BookOpen, Award, QrCode, Bug, Trophy, Flame, BookMarked, Music, Loader2 } from 'lucide-react';
+import PrayerModule from './PrayerModule';
+import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Users, Eye, Briefcase, Gift, Ticket, Tag, CheckCircle, Zap, BarChart3, BookOpen, Award, QrCode, Bug, Trophy, Flame, BookMarked, Music, Loader2, Heart } from 'lucide-react';
 
 // Locais pré-definidos para eventos (menu de seleção); "Outro" libera um campo de texto livre.
 const EVENT_LOCATIONS = ['Campus Zion RP', 'Templo Principal', 'Auditório', 'Sala de Reuniões', 'Keola Coffee', 'Área Externa', 'Online', 'A definir'];
@@ -347,6 +348,18 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
     }
   };
 
+  const handlePrayerAccessToggle = async (userId, prayerAccess) => {
+    try {
+      const res = await apiFetch(`/api/users/${userId}/prayer-access`, { method: 'PATCH', body: { prayerAccess } });
+      if (res.ok) {
+        setAllUsers(allUsers.map(u => u.id === userId ? { ...u, prayerAccess } : u));
+        showNotification(prayerAccess ? 'Acesso aos pedidos de oração liberado!' : 'Acesso aos pedidos de oração removido.');
+      } else showNotification('Não foi possível alterar o acesso.');
+    } catch {
+      showNotification('Falha de rede.');
+    }
+  };
+
   // Acesso administrativo por módulo (Links, Áreas ou Loja) sem precisar do cargo Admin/Pastor
   const MODULE_FLAG_FIELD = { links: 'canManageLinks', areas: 'canManageAreas', store: 'canManageStore' };
   const handleModuleAccessToggle = async (userId, moduleKey, value) => {
@@ -581,6 +594,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
         <button onClick={() => setActiveTab('membros')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'membros' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Users className="w-4 h-4"/> Membros</button>
         {user.role === 'ADMIN' && <button onClick={() => setActiveTab('cargos')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'cargos' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><ShieldCheck className="w-4 h-4"/> Cargos</button>}
         <button onClick={() => setActiveTab('bugs')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'bugs' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Bug className="w-4 h-4"/> Bugs</button>
+        <button onClick={() => setActiveTab('oracao')} className={`pb-2 text-sm font-semibold transition-colors flex items-center gap-1.5 whitespace-nowrap outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${activeTab === 'oracao' ? 'border-b-2 border-brand-primary text-brand-primary' : 'text-text-muted hover:text-white'}`}><Heart className="w-4 h-4"/> Oração</button>
       </div>
 
       {isLoading ? (
@@ -685,6 +699,9 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
               )}
             </div>
           )}
+
+          {/* ─── PEDIDOS DE ORAÇÃO ─── */}
+          {activeTab === 'oracao' && <PrayerModule user={user} showNotification={showNotification} />}
 
           {/* ─── PAINEL (MÉTRICAS) ─── */}
           {activeTab === 'painel' && (
@@ -1408,6 +1425,13 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                          className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-md border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${usr.canRedeem ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30 hover:bg-emerald-500/20' : 'text-text-muted bg-surface-dark border-white/10 hover:text-white'}`}
                        >
                          <QrCode className="w-3.5 h-3.5"/> {usr.canRedeem ? 'Atendente ✓' : 'Atendente'}
+                       </button>
+                       <button
+                         onClick={() => handlePrayerAccessToggle(usr.id, !usr.prayerAccess)}
+                         title={usr.prayerAccess ? 'Pode ver pedidos de oração — clique para remover' : 'Não vê pedidos de oração — clique para liberar acesso'}
+                         className={`flex items-center gap-1.5 text-xs font-bold px-3 py-1.5 rounded-md border transition-colors outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 ${usr.prayerAccess ? 'text-pink-400 bg-pink-500/10 border-pink-500/30 hover:bg-pink-500/20' : 'text-text-muted bg-surface-dark border-white/10 hover:text-white'}`}
+                       >
+                         <Heart className="w-3.5 h-3.5"/> {usr.prayerAccess ? 'Oração ✓' : 'Oração'}
                        </button>
                        {isStaffRole(user.role) && (
                        <div className="flex items-center gap-1 bg-surface-dark border border-white/10 rounded-md p-1" title="Acesso administrativo por módulo">

@@ -34,7 +34,7 @@ const authLimiter = rateLimit({ windowMs: 15 * 60 * 1000, max: 20, standardHeade
 const userPublic = {
   id: true, name: true, email: true, role: true, campus: true,
   points: true, bibleStreak: true, profileImage: true, canRedeem: true, welcomed: true, createdAt: true, updatedAt: true,
-  canManageLinks: true, canManageAreas: true, canManageStore: true,
+  canManageLinks: true, canManageAreas: true, canManageStore: true, prayerAccess: true,
 } as const;
 
 // Hierarquia de cargos (ordem de liderança). Usada p/ liberar recursos por nível.
@@ -57,6 +57,7 @@ const PERM_CATALOG: { key: string; label: string; description: string; category:
   { key: 'PUBLICATION_MANAGE',  label: 'Moderar publicações do mural',    description: 'Excluir publicações de qualquer pessoa no mural do Início, além das próprias.', category: 'Comunicação',   defaultMinRank: ROLE_RANK.PASTOR },
   { key: 'POINT_RULE_MANAGE',   label: 'Editar regras de pontuação',      description: 'Ajustar quantos Zion Points cada ação concede (Gamificação).',       category: 'Gamificação',   defaultMinRank: ROLE_RANK.PASTOR },
   { key: 'BUG_REPORT_MANAGE',   label: 'Ver e resolver bugs reportados',  description: 'Acessar a lista de bugs/sugestões enviados pelos membros.',          category: 'Sistema',       defaultMinRank: ROLE_RANK.PASTOR },
+  { key: 'PRAYER_VIEW',         label: 'Ver pedidos de oração',           description: 'Acessar e marcar como orados os pedidos de oração da comunidade.',   category: 'Comunidade',    defaultMinRank: ROLE_RANK.PASTOR },
 ];
 
 const hasPerm = async (role: string | undefined, permKey: string): Promise<boolean> => {
@@ -110,7 +111,18 @@ const isIntercessor = async (userId: string) => {
   ]);
   return parts.some(p => isIntercessionArea(p.area?.name)) || ledAreas.some(a => isIntercessionArea(a.name));
 };
-const canViewPrayers = async (req: Request) => isStaff(req) || (!!req.user && await isIntercessor(req.user.id));
+// Acesso aos pedidos de oração: staff, líder/voluntário aprovado da área de Intercessão,
+// acesso individual liberado em Admin > Membros (User.prayerAccess), ou permissão por cargo.
+const canViewPrayers = async (req: Request): Promise<boolean> => {
+  if (isStaff(req)) return true;
+  if (!req.user) return false;
+  const [isInter, user, hasRolePerm] = await Promise.all([
+    isIntercessor(req.user.id),
+    prisma.user.findUnique({ where: { id: req.user.id }, select: { prayerAccess: true } }),
+    hasPerm(req.user.role, 'PRAYER_VIEW'),
+  ]);
+  return isInter || !!user?.prayerAccess || hasRolePerm;
+};
 
 // ─── Helpers de erro / async ──────────────────────────────────────────────
 type AsyncHandler = (req: Request, res: Response, next: NextFunction) => Promise<unknown>;
@@ -174,6 +186,7 @@ const resetSchema = z.object({ email: z.string().email(), password: z.string().m
 const userUpdateSchema = z.object({ name: z.string().min(1).optional(), profileImage: z.string().nullable().optional() });
 const roleSchema = z.object({ role: z.enum(['MEMBRO', 'VOLUNTARIO', 'AUXILIAR_LIDER', 'LIDER', 'PASTOR', 'ADMIN']) });
 const redeemFlagSchema = z.object({ canRedeem: z.boolean() });
+const prayerAccessSchema = z.object({ prayerAccess: z.boolean() });
 const publicationSchema = z.object({ content: z.string().min(1), imageUrl: z.string().optional(), documentUrl: z.string().optional() });
 const eventSchema = z.object({ title: z.string().min(1), date: z.string().min(1), location: z.string().optional(), type: z.string().optional(), recurrence: z.enum(['NONE', 'WEEKLY', 'MONTHLY']).optional() });
 const announcementSchema = z.object({ title: z.string().min(1), content: z.string().min(1), type: z.string().optional() });
@@ -451,6 +464,9 @@ app.patch('/api/users/:id/role', staffOnly, validate(roleSchema), h(async (req, 
 // Liberar/bloquear resgate de prêmios para um usuário (admin)
 app.patch('/api/users/:id/redeem-flag', staffOnly,validate(redeemFlagSchema), h(async (req, res) =>
   res.json(await prisma.user.update({ where: { id: pid(req) }, data: { canRedeem: req.body.canRedeem }, select: userPublic }))));
+// Liberar/bloquear acesso individual aos pedidos de oração para um usuário específico (admin)
+app.patch('/api/users/:id/prayer-access', staffOnly, validate(prayerAccessSchema), h(async (req, res) =>
+  res.json(await prisma.user.update({ where: { id: pid(req) }, data: { prayerAccess: req.body.prayerAccess }, select: userPublic }))));
 // Conceder/revogar acesso administrativo a um módulo específico (Links, Áreas ou Loja) sem
 // precisar do cargo Admin/Pastor. Só staff (Admin/Pastor) concede.
 const moduleAccessSchema = z.object({ module: z.enum(['links', 'areas', 'store']), value: z.boolean() });
