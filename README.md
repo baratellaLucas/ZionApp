@@ -15,8 +15,11 @@
 ![Tailwind](https://img.shields.io/badge/TailwindCSS-3-38BDF8?logo=tailwindcss&logoColor=white)
 ![Node](https://img.shields.io/badge/Node.js-Express_5-339933?logo=node.js&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-3178C6?logo=typescript&logoColor=white)
-![Prisma](https://img.shields.io/badge/Prisma-SQLite-2D3748?logo=prisma&logoColor=white)
+![Prisma](https://img.shields.io/badge/Prisma-PostgreSQL-2D3748?logo=prisma&logoColor=white)
 ![JWT](https://img.shields.io/badge/Auth-JWT_%2B_bcrypt-000000?logo=jsonwebtokens&logoColor=white)
+![Vercel](https://img.shields.io/badge/Frontend-Vercel-000000?logo=vercel&logoColor=white)
+![Render](https://img.shields.io/badge/Backend-Render-46E3B7?logo=render&logoColor=white)
+![Neon](https://img.shields.io/badge/DB-Neon-00E599?logo=postgresql&logoColor=white)
 
 </div>
 
@@ -42,16 +45,16 @@ Este é um projeto de **Atividade de Extensão** do curso de Análise e Desenvol
 
 | | Módulo | O que faz |
 |---|---|---|
-| 📖 | **Plano Bíblico 2026** | Leitura diária dos 365 dias, com texto no próprio app, sequência (streak), marcos e efeito de "fogo". |
+| 📖 | **Plano Bíblico** | Leitura diária, com texto no próprio app, sequência (streak), marcos, efeito de "fogo" e planos editáveis por ano (+ atalho para o Spotify). |
 | 🔥 | **Gamificação** | Ganhe **Zion Points** ao ler, servir e participar. Regras configuráveis e ranking. |
-| 👥 | **Links (pequenos grupos)** | Explore, entre (com aprovação do líder) e interaja no mural: reações, enquetes e avisos fixados. |
-| 🤝 | **Voluntariado** | Áreas de serviço, escalas criadas pelo líder, disponibilidade e mural da equipe. |
-| 🎁 | **Loja de Recompensas** | Troque pontos por prêmios. O voucher é validado pelo atendente via **QR Code**. |
-| 🙏 | **Intercessão** | Envie pedidos de oração direto para a equipe de intercessão. |
-| 📅 | **Eventos + Check-in por QR** | Escaneou, confirmou presença e ganhou pontos — tudo automático. |
-| 🏆 | **Grupos de leitura** | Competição saudável estilo "gym rats": chat, convites e ranking semanal. |
+| 👥 | **Links (pequenos grupos)** | Explore, entre (com aprovação do líder ou convite direto) e interaja no mural: reações, enquetes e avisos fixados. |
+| 🤝 | **Voluntariado** | Áreas de serviço, escalas, disponibilidade, **treinamentos por módulo** (com pré-requisito para servir numa posição) e mural da equipe. |
+| 🎁 | **Loja de Recompensas** | Troque pontos por prêmios. O voucher é validado pelo atendente via **QR Code** (leitor de câmera embutido). |
+| 🙏 | **Intercessão** | Envie pedidos de oração; acesso à lista controlado por área, cargo ou liberação individual. |
+| 📅 | **Eventos + Check-in por QR** | RSVP e depois check-in real (por código ou câmera) — presença confirmada credita pontos. |
+| 🏆 | **Grupos de leitura** | Competição saudável estilo "gym rats": chat, convites, ranking por grupo e ranking geral. |
 | 🔔 | **Notificações inteligentes** | Avisos que levam direto à tela certa, com lembrete diário de leitura. |
-| 🛠️ | **Painel Admin** | Métricas, gestão de conteúdo, cargos, permissões, loja, gamificação e reportes de bugs. |
+| 🛠️ | **Painel Admin** | Métricas, gestão de conteúdo, cargos, matriz de permissões, loja, gamificação, planos de leitura e reportes de bugs. |
 
 ---
 
@@ -98,7 +101,8 @@ Cada nível desbloqueia responsabilidades (aprovar entradas, criar escalas, mode
 ## 🧱 Stack
 
 **Frontend:** React 19 · Vite · TailwindCSS · lucide-react
-**Backend:** Node.js · Express 5 · TypeScript · Prisma ORM · SQLite
+**Backend:** Node.js · Express 5 · TypeScript · Prisma ORM · PostgreSQL
+**Deploy:** Vercel (frontend) · Render (backend) · Neon (banco PostgreSQL)
 **Segurança:** JWT · bcrypt · Zod · rate limiting · autorização por cargo/permissão
 
 ---
@@ -106,10 +110,10 @@ Cada nível desbloqueia responsabilidades (aprovar entradas, criar escalas, mode
 ## ⚡ Como rodar
 
 ```bash
-# Backend (porta 3000)
+# Backend (porta 3000) — precisa de um DATABASE_URL (Postgres) em backend/.env
 cd backend
 npm install
-npx prisma migrate deploy && npx prisma generate
+npx prisma db push --skip-generate && npx prisma generate
 npx tsx src/server.ts
 # 1ª vez: popular dados de exemplo
 curl -X POST http://localhost:3000/api/seed -H "x-seed-key: zion-dev-seed"
