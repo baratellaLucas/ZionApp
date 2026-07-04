@@ -4,12 +4,13 @@ import Avatar from '../components/Avatar';
 import { getAreaIconComponent } from '../utils/areaIcons';
 import { getEventOccurrences } from '../utils/eventOccurrences';
 import { extractCheckinCode } from '../utils/qrCheckin';
+import { compressImage, fileToDataUrl } from '../utils/image';
 const QrScanner = lazy(() => import('../components/QrScanner'));
 import {
   CalendarDays, Smile, Megaphone, Briefcase, Clock,
   CheckCircle, GraduationCap, Users, MessageSquare, ShieldCheck,
   Award, Gift, X, BookOpen, Trash2, AlertTriangle, Heart,
-  Send, Pin, BarChart3, Plus, Loader2, Eye, Camera
+  Send, Pin, BarChart3, Plus, Loader2, Eye, Camera, Video, Link as LinkIcon, Edit3, Image as ImageIcon
 } from 'lucide-react';
 
 // Categorias e emojis do mural da área (mesma lógica do mural de Links)
@@ -59,7 +60,6 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   const [selectedAreaId,   setSelectedAreaId]   = useState(null);
   const [modalTab,         setModalTab]         = useState('escalas');
   const [availability,     setAvailability]     = useState({});
-  const [trainingProgress, setTrainingProgress] = useState(40);
   const [areaToCancel,     setAreaToCancel]     = useState(null); // controla modal de confirmação interno
 
   const [shifts,           setShifts]           = useState([]);
@@ -71,6 +71,11 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
   const [shiftDrafts,      setShiftDrafts]      = useState({}); // { areaId: { date, volunteerId, positionId } }
   const [areaPositions,    setAreaPositions]    = useState({}); // { areaId: [AreaPosition] }
   const [newPositionName,  setNewPositionName]  = useState({}); // { areaId: string }
+  const [newPositionTraining, setNewPositionTraining] = useState({}); // { areaId: trainingId }
+  const [areaTrainings,    setAreaTrainings]    = useState({}); // { areaId: [AreaTraining] }
+  const [trainingCompletions, setTrainingCompletions] = useState({}); // { trainingId: [userId] }
+  const [editingTraining,  setEditingTraining]  = useState(null); // { id, areaId, title, description, videoUrl, imageUrl, linkUrl }
+  const [savingTraining,   setSavingTraining]   = useState(false);
   const [events,           setEvents]           = useState([]);
   const [eventRsvps,       setEventRsvps]       = useState([]); // refIds de eventos VOLUNTARIO com RSVP feito
   const [eventCheckins,    setEventCheckins]    = useState([]); // refIds com check-in real (pontos só aqui)
@@ -243,12 +248,11 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     const fetchData = async () => {
       try {
         const query = user?.id ? `?userId=${user.id}` : '';
-        const [resAreas, resMine, resShifts, resAnn, resPoints, resPray, resEvents, resEventParts, resUsers] = await Promise.all([
+        const [resAreas, resMine, resShifts, resAnn, resPray, resEvents, resEventParts, resUsers] = await Promise.all([
           apiFetch(`/api/areas`).catch(() => null),
           user?.id ? apiFetch(`/api/areas/my-participations?userId=${user.id}`).catch(() => null) : null,
           apiFetch(`/api/shifts${query}`).catch(() => null),
           apiFetch(`/api/announcements?type=VOLUNTARIO`).catch(() => null),
-          apiFetch(`/api/points/mine`).catch(() => null),
           apiFetch(`/api/prayer-requests/access`).catch(() => null),
           apiFetch(`/api/events`).catch(() => null),
           apiFetch(`/api/events/my-participations`).catch(() => null),
@@ -268,10 +272,6 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
           const parts = await resEventParts.json();
           setEventRsvps(parts.map(p => p.refId));
           setEventCheckins(parts.filter(p => p.checkedInAt).map(p => p.refId));
-        }
-        if (resPoints && resPoints.ok) {
-          const awards = await resPoints.json();
-          if (awards.some(a => a.ruleKey === 'TRAINING_COMPLETION')) setTrainingProgress(100);
         }
         if (resPray && resPray.ok) {
           const { canView } = await resPray.json();
@@ -565,6 +565,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     loadAreaTeam(areaId);
     loadMyAvailability(areaId);
     loadAreaPositions(areaId);
+    loadAreaTrainings(areaId);
     const areaObj = areas.find(a => a.id === areaId);
     if (areaObj && (areaObj.leaderId === user?.id || isAreaStaff(user))) loadLeaderArea(areaId);
   };
@@ -653,9 +654,12 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
     const name = (newPositionName[areaId] || '').trim();
     if (!name) return;
     try {
-      const res = await apiFetch(`/api/areas/${areaId}/positions`, { method: 'POST', body: { name } });
-      if (res.ok) { setNewPositionName(prev => ({ ...prev, [areaId]: '' })); loadAreaPositions(areaId); }
-      else { const e = await res.json().catch(() => ({})); showNotification(e.error || 'Falha ao criar posição.'); }
+      const res = await apiFetch(`/api/areas/${areaId}/positions`, { method: 'POST', body: { name, requiredTrainingId: newPositionTraining[areaId] || null } });
+      if (res.ok) {
+        setNewPositionName(prev => ({ ...prev, [areaId]: '' }));
+        setNewPositionTraining(prev => ({ ...prev, [areaId]: '' }));
+        loadAreaPositions(areaId);
+      } else { const e = await res.json().catch(() => ({})); showNotification(e.error || 'Falha ao criar posição.'); }
     } catch { showNotification('Falha de rede.'); }
   };
   const handleDeletePosition = async (positionId, areaId) => {
@@ -663,6 +667,64 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
       const res = await apiFetch(`/api/areas/positions/${positionId}`, { method: 'DELETE' });
       if (res.ok) setAreaPositions(prev => ({ ...prev, [areaId]: (prev[areaId] || []).filter(p => p.id !== positionId) }));
     } catch { showNotification('Falha de rede.'); }
+  };
+
+  // ─── treinamentos da área (módulos: vídeo/foto/link) — só líder/staff cria/edita ─────
+  const loadAreaTrainings = async (areaId) => {
+    try {
+      const res = await apiFetch(`/api/areas/${areaId}/trainings`).catch(() => null);
+      if (res && res.ok) { const rows = await res.json(); setAreaTrainings(prev => ({ ...prev, [areaId]: rows })); }
+    } catch { /* ignora */ }
+  };
+  const openTrainingEditor = (areaId, training) => {
+    setEditingTraining(training
+      ? { id: training.id, areaId, title: training.title, description: training.description || '', videoUrl: training.videoUrl || '', imageUrl: training.imageUrl || '', linkUrl: training.linkUrl || '' }
+      : { id: null, areaId, title: '', description: '', videoUrl: '', imageUrl: '', linkUrl: '' });
+  };
+  const handleTrainingImageUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try { const img = await compressImage(file, 800, 0.75); setEditingTraining(prev => ({ ...prev, imageUrl: img })); }
+    catch { const img = await fileToDataUrl(file).catch(() => ''); setEditingTraining(prev => ({ ...prev, imageUrl: img })); }
+  };
+  const handleSaveTraining = async (e) => {
+    e.preventDefault();
+    if (!editingTraining) return;
+    const { id, areaId, ...body } = editingTraining;
+    if (!body.title.trim()) return showNotification('Informe um título para o treinamento.');
+    setSavingTraining(true);
+    try {
+      const res = await apiFetch(id ? `/api/areas/trainings/${id}` : `/api/areas/${areaId}/trainings`, { method: id ? 'PUT' : 'POST', body });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) { showNotification('Treinamento salvo!'); setEditingTraining(null); loadAreaTrainings(areaId); }
+      else showNotification(data.error || 'Falha ao salvar treinamento.');
+    } catch { showNotification('Falha de rede ao salvar.'); }
+    finally { setSavingTraining(false); }
+  };
+  const handleDeleteTraining = async (trainingId, areaId) => {
+    try {
+      const res = await apiFetch(`/api/areas/trainings/${trainingId}`, { method: 'DELETE' });
+      if (res.ok) setAreaTrainings(prev => ({ ...prev, [areaId]: (prev[areaId] || []).filter(t => t.id !== trainingId) }));
+      else showNotification('Falha ao remover treinamento.');
+    } catch { showNotification('Falha de rede.'); }
+  };
+  const loadPositionCompletions = async (trainingId) => {
+    if (!trainingId || trainingCompletions[trainingId]) return;
+    try {
+      const res = await apiFetch(`/api/areas/trainings/${trainingId}/completions`).catch(() => null);
+      if (res && res.ok) { const ids = await res.json(); setTrainingCompletions(prev => ({ ...prev, [trainingId]: ids })); }
+    } catch { /* ignora */ }
+  };
+  const handleCompleteTraining = async (trainingId, areaId) => {
+    try {
+      const res = await apiFetch(`/api/areas/trainings/${trainingId}/complete`, { method: 'POST' });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        setAreaTrainings(prev => ({ ...prev, [areaId]: (prev[areaId] || []).map(t => t.id === trainingId ? { ...t, completedByMe: true } : t) }));
+        setUser(prev => ({ ...prev, points: data.points ?? prev.points }));
+        showNotification(data.already ? 'Você já tinha concluído este treinamento.' : `Treinamento concluído! +${data.awarded} Zion Points! 🎯`);
+      } else showNotification(data.error || 'Falha ao concluir treinamento.');
+    } catch { showNotification('Falha de rede ao concluir treinamento.'); }
   };
 
   // ─── filtro de escala por evento existente (dia/período do evento → voluntários disponíveis) ─
@@ -1084,6 +1146,7 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                 const areaId = activeAreaDetails.id;
                 const positions = areaPositions[areaId] || [];
                 const posDraft = newPositionName[areaId] || '';
+                const trainings = areaTrainings[areaId] || [];
                 const sh = areaShifts[areaId] || [];
                 const approved = areaApproved[areaId] || [];
                 const draft = shiftDrafts[areaId] || {};
@@ -1113,17 +1176,53 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                       {positions.length > 0 && (
                         <div className="flex flex-wrap gap-2 mb-3">
                           {positions.map(p => (
-                            <span key={p.id} className="flex items-center gap-1.5 bg-surface-dark border border-white/10 text-white text-xs px-2.5 py-1.5 rounded-full">
+                            <span key={p.id} className="flex items-center gap-1.5 bg-surface-dark border border-white/10 text-white text-xs px-2.5 py-1.5 rounded-full" title={p.requiredTraining ? `Exige treinamento: ${p.requiredTraining.title}` : undefined}>
                               {p.name}
+                              {p.requiredTraining && <GraduationCap className="w-3 h-3 text-amber-400 shrink-0"/>}
                               <button onClick={() => handleDeletePosition(p.id, areaId)} title="Remover posição" className="text-text-muted hover:text-red-400 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><X className="w-3 h-3"/></button>
                             </span>
                           ))}
                         </div>
                       )}
-                      <div className="flex gap-2">
+                      <div className="flex flex-col sm:flex-row gap-2">
                         <input type="text" value={posDraft} onChange={e => setNewPositionName(prev => ({ ...prev, [areaId]: e.target.value }))} placeholder="Nova posição (ex: Barista)" maxLength={60} className="flex-1 bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60" />
-                        <button onClick={() => handleAddPosition(areaId)} className="bg-surface-dark border border-white/10 hover:border-brand-primary text-white px-4 py-2 rounded-md text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">Adicionar</button>
+                        {trainings.length > 0 && (
+                          <select value={newPositionTraining[areaId] || ''} onChange={e => setNewPositionTraining(prev => ({ ...prev, [areaId]: e.target.value }))} className="bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                            <option value="">Sem treinamento exigido</option>
+                            {trainings.map(t => <option key={t.id} value={t.id}>Exige: {t.title}</option>)}
+                          </select>
+                        )}
+                        <button onClick={() => handleAddPosition(areaId)} className="bg-surface-dark border border-white/10 hover:border-brand-primary text-white px-4 py-2 rounded-md text-sm font-semibold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 shrink-0">Adicionar</button>
                       </div>
+                    </div>
+
+                    <div className="border-t border-white/5 pt-8">
+                      <div className="flex items-center justify-between mb-3">
+                        <h4 className="text-sm font-bold text-text-primary flex items-center gap-2"><GraduationCap className="w-4 h-4 text-brand-primary"/> Treinamentos ({trainings.length})</h4>
+                        <button onClick={() => openTrainingEditor(areaId, null)} className="text-xs font-bold text-brand-primary hover:underline flex items-center gap-1 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Plus className="w-3.5 h-3.5"/> Novo módulo</button>
+                      </div>
+                      {trainings.length === 0 ? (
+                        <p className="text-xs text-text-muted italic">Nenhum treinamento cadastrado. Crie módulos (ex: "Módulo Barista", "Módulo Forno") com vídeo, foto ou link.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {trainings.map(t => (
+                            <div key={t.id} className="flex justify-between items-center bg-surface-dark p-2.5 rounded-md border border-white/5 text-sm">
+                              <div className="min-w-0">
+                                <div className="text-white truncate font-semibold">{t.title}</div>
+                                <div className="text-xs text-text-muted flex items-center gap-2 mt-0.5">
+                                  {t.videoUrl && <span className="flex items-center gap-1"><Video className="w-3 h-3"/> vídeo</span>}
+                                  {t.imageUrl && <span className="flex items-center gap-1"><ImageIcon className="w-3 h-3"/> foto</span>}
+                                  {t.linkUrl && <span className="flex items-center gap-1"><LinkIcon className="w-3 h-3"/> link</span>}
+                                </div>
+                              </div>
+                              <div className="flex gap-1 shrink-0">
+                                <button onClick={() => openTrainingEditor(areaId, t)} title="Editar" className="p-1.5 rounded-md text-text-muted hover:text-brand-primary hover:bg-brand-primary/10 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Edit3 className="w-4 h-4"/></button>
+                                <button onClick={() => handleDeleteTraining(t.id, areaId)} title="Remover" className="p-1.5 rounded-md text-text-muted hover:text-red-400 hover:bg-red-500/10 outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"><Trash2 className="w-4 h-4"/></button>
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
                     </div>
 
                     <div className="border-t border-white/5 pt-8">
@@ -1181,14 +1280,24 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                           </div>
                         </div>
                         <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                          <select value={draft.volunteerId || ''} onChange={e => setDraft(areaId, { volunteerId: e.target.value })} className="bg-surface-card border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
-                            <option value="">Vaga aberta (visível a todos até alguém aceitar)</option>
-                            {approved.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                          </select>
+                          {(() => {
+                            const selectedPosition = positions.find(p => p.id === draft.positionId);
+                            const requiredTrainingId = selectedPosition?.requiredTrainingId;
+                            const eligibleIds = requiredTrainingId ? trainingCompletions[requiredTrainingId] : null;
+                            return (
+                              <select value={draft.volunteerId || ''} onChange={e => setDraft(areaId, { volunteerId: e.target.value })} className="bg-surface-card border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                                <option value="">Vaga aberta (visível a todos até alguém aceitar)</option>
+                                {approved.map(u => {
+                                  const eligible = !requiredTrainingId || !eligibleIds || eligibleIds.includes(u.id);
+                                  return <option key={u.id} value={u.id}>{u.name}{!eligible ? ' (sem o treinamento exigido)' : ''}</option>;
+                                })}
+                              </select>
+                            );
+                          })()}
                           {positions.length > 0 && (
-                            <select value={draft.positionId || ''} onChange={e => setDraft(areaId, { positionId: e.target.value })} className="bg-surface-card border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
+                            <select value={draft.positionId || ''} onChange={e => { setDraft(areaId, { positionId: e.target.value }); const pos = positions.find(p => p.id === e.target.value); if (pos?.requiredTrainingId) loadPositionCompletions(pos.requiredTrainingId); }} className="bg-surface-card border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60">
                               <option value="">Sem posição</option>
-                              {positions.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+                              {positions.map(p => <option key={p.id} value={p.id}>{p.name}{p.requiredTraining ? ` (exige ${p.requiredTraining.title})` : ''}</option>)}
                             </select>
                           )}
                         </div>
@@ -1199,69 +1308,58 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
                 );
               })()}
 
-              {/* TAB: TREINAMENTOS — FIX: BookOpen importado, sem tela preta */}
-              {modalTab === 'treinamentos' && (
-                <div className="space-y-6 animate-in fade-in">
-                  <div className="bg-surface-dark p-6 rounded-default border border-brand-primary/20 flex flex-col sm:flex-row items-center justify-between gap-4">
-                    <div className="text-center sm:text-left">
-                      <div className="text-sm text-text-muted mb-1">Seu Progresso na Trilha</div>
-                      <div className="text-3xl font-display font-bold text-white flex items-baseline gap-1 justify-center sm:justify-start">
-                        {trainingProgress}% <span className="text-xs font-sans font-normal text-brand-primary uppercase tracking-wider ml-1">Concluído</span>
+              {/* TAB: TREINAMENTOS — módulos reais da área (vídeo/foto/link), definidos pelo líder */}
+              {modalTab === 'treinamentos' && (() => {
+                const trainings = areaTrainings[selectedAreaId] || [];
+                const doneCount = trainings.filter(t => t.completedByMe).length;
+                const pct = trainings.length ? Math.round((doneCount / trainings.length) * 100) : 0;
+                return (
+                  <div className="space-y-6 animate-in fade-in">
+                    <div className="bg-surface-dark p-6 rounded-default border border-brand-primary/20 flex flex-col sm:flex-row items-center justify-between gap-4">
+                      <div className="text-center sm:text-left">
+                        <div className="text-sm text-text-muted mb-1">Seu Progresso na Trilha</div>
+                        <div className="text-3xl font-display font-bold text-white flex items-baseline gap-1 justify-center sm:justify-start">
+                          {pct}% <span className="text-xs font-sans font-normal text-brand-primary uppercase tracking-wider ml-1">{doneCount}/{trainings.length} concluídos</span>
+                        </div>
                       </div>
+                      <div className="bg-brand-primary/10 p-3 rounded-full"><Award className="w-10 h-10 text-brand-primary"/></div>
                     </div>
-                    <div className="bg-brand-primary/10 p-3 rounded-full"><Award className="w-10 h-10 text-brand-primary"/></div>
+
+                    {trainings.length === 0 ? (
+                      <div className="text-center text-text-muted py-8 bg-surface-dark border border-dashed border-white/10 rounded-default text-sm">Nenhum treinamento cadastrado para esta área ainda.</div>
+                    ) : (
+                      <div className="space-y-3">
+                        {trainings.map(t => (
+                          <div key={t.id} className={`border p-4 rounded-default transition-all shadow-level-2 ${t.completedByMe ? 'bg-surface-dark border-brand-primary/30 opacity-70' : 'bg-surface-card border-white/10 hover:border-brand-primary/30'}`}>
+                            <div className="flex justify-between items-center mb-2 gap-3">
+                              <h4 className="font-bold text-text-primary flex items-center gap-2"><GraduationCap className="w-4 h-4 text-brand-primary shrink-0"/> {t.title}</h4>
+                              {t.completedByMe ? (
+                                <span className="text-xs font-bold bg-brand-primary/20 text-brand-primary px-2 py-1 rounded-md shrink-0">Concluído</span>
+                              ) : (
+                                <button onClick={() => handleCompleteTraining(t.id, selectedAreaId)} className="text-xs font-bold bg-brand-primary text-white hover:bg-brand-secondary transition-colors px-4 py-1.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 flex items-center gap-1 shrink-0">
+                                  Concluir <Gift className="w-3 h-3"/>
+                                </button>
+                              )}
+                            </div>
+                            {t.description && <p className="text-xs text-text-muted mb-3">{t.description}</p>}
+                            {t.imageUrl && <img src={t.imageUrl} alt={t.title} className="rounded-md border border-white/10 max-h-48 w-full object-cover mb-3"/>}
+                            {t.videoUrl && (
+                              <a href={t.videoUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-xs font-semibold text-blue-400 hover:text-blue-300 bg-blue-500/10 border border-blue-500/20 px-3 py-2 rounded-md mb-2">
+                                <Video className="w-3.5 h-3.5"/> Assistir vídeo
+                              </a>
+                            )}
+                            {t.linkUrl && (
+                              <a href={t.linkUrl} target="_blank" rel="noopener noreferrer" className="flex items-center gap-2 text-xs font-semibold text-emerald-400 hover:text-emerald-300 bg-emerald-500/10 border border-emerald-500/20 px-3 py-2 rounded-md">
+                                <LinkIcon className="w-3.5 h-3.5"/> Material de apoio
+                              </a>
+                            )}
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-
-                  <div className="space-y-3">
-                    {/* Módulo 1: Concluído */}
-                    <div className="bg-surface-dark border border-brand-primary/30 p-4 rounded-default opacity-60">
-                      <div className="flex justify-between items-center mb-2">
-                        <h4 className="font-bold text-text-primary flex items-center gap-2"><CheckCircle className="w-4 h-4 text-brand-primary"/> Integração {activeAreaDetails.name}</h4>
-                        <span className="text-xs font-bold bg-brand-primary/20 text-brand-primary px-2 py-1 rounded-md">Concluído</span>
-                      </div>
-                      <p className="text-xs text-text-muted">Visão, valores e regras de ouro do nosso ministério.</p>
-                    </div>
-
-                    {/* Módulo 2: Em andamento */}
-                    <div className="bg-surface-card border border-white/10 hover:border-brand-primary/30 p-4 rounded-default transition-all shadow-level-2">
-                      <div className="flex justify-between items-center mb-2">
-                        {/* FIX: BookOpen agora importado corretamente */}
-                        <h4 className="font-bold text-text-primary flex items-center gap-2"><BookOpen className="w-4 h-4 text-brand-primary"/> Técnica Operacional</h4>
-                        {trainingProgress === 100 ? (
-                          <span className="text-xs font-bold bg-brand-primary/20 text-brand-primary px-2 py-1 rounded-md">Concluído</span>
-                        ) : (
-                          <button
-                            onClick={async () => {
-                              try {
-                                const res = await apiFetch('/api/training/complete', { method: 'POST', body: { moduleId: 'TECNICA_OPERACIONAL' } });
-                                const data = await res.json().catch(() => ({}));
-                                if (res.ok) {
-                                  setTrainingProgress(100);
-                                  setUser(prev => ({ ...prev, points: data.points ?? prev.points }));
-                                  showNotification(data.awarded ? `Treinamento Concluído! Você ganhou +${data.awarded} Zion Points! 🎯` : 'Treinamento concluído!');
-                                } else showNotification(data.error || 'Falha ao concluir treinamento.');
-                              } catch { showNotification('Falha de rede ao concluir treinamento.'); }
-                            }}
-                            className="text-xs font-bold bg-brand-primary text-white hover:bg-brand-secondary transition-colors px-4 py-1.5 rounded-md outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 flex items-center gap-1"
-                          >
-                            Concluir <Gift className="w-3 h-3"/>
-                          </button>
-                        )}
-                      </div>
-                      <p className="text-xs text-text-muted">Aprenda a operar os equipamentos básicos e rotinas de abertura.</p>
-                    </div>
-
-                    {/* Módulo 3: Bloqueado */}
-                    <div className="bg-surface-card border border-white/5 p-4 rounded-default opacity-50">
-                      <div className="flex justify-between items-center mb-2">
-                        <h4 className="font-bold text-text-primary flex items-center gap-2"><ShieldCheck className="w-4 h-4 text-text-muted"/> Liderança em Treinamento</h4>
-                        <span className="text-xs font-bold text-text-muted flex items-center gap-1"><Clock className="w-3 h-3"/> Bloqueado</span>
-                      </div>
-                      <p className="text-xs text-text-muted">Disponível após conclusão do Nível 1 e indicação pastoral.</p>
-                    </div>
-                  </div>
-                </div>
-              )}
+                );
+              })()}
 
               {/* TAB: EQUIPE */}
               {modalTab === 'equipe' && (() => {
@@ -1415,6 +1513,44 @@ const VoluntariosModule = ({ user, setUser, showNotification, intent, onIntentHa
             }}
           />
         </Suspense>
+      )}
+
+      {/* ── MODAL: CRIAR/EDITAR TREINAMENTO DA ÁREA (vídeo, foto, link) ── */}
+      {editingTraining && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center p-4 bg-black/70 animate-in fade-in duration-200" onClick={() => !savingTraining && setEditingTraining(null)}>
+          <div className="bg-surface-card border border-white/10 rounded-2xl shadow-2xl max-w-lg w-full max-h-[90vh] overflow-y-auto p-6 animate-in zoom-in-95 duration-200" onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-center mb-4">
+              <h3 className="text-lg font-bold text-text-primary flex items-center gap-2"><GraduationCap className="w-5 h-5 text-brand-primary"/> {editingTraining.id ? 'Editar Treinamento' : 'Novo Treinamento'}</h3>
+              <button onClick={() => setEditingTraining(null)} className="p-1.5 text-text-muted hover:text-white outline-none"><X className="w-5 h-5"/></button>
+            </div>
+            <form onSubmit={handleSaveTraining} className="space-y-4">
+              <div>
+                <label className="text-xs text-text-muted mb-1 block">Título do módulo</label>
+                <input required type="text" placeholder="Ex: Módulo Barista" value={editingTraining.title} onChange={e => setEditingTraining({ ...editingTraining, title: e.target.value })} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"/>
+              </div>
+              <div>
+                <label className="text-xs text-text-muted mb-1 block">Descrição</label>
+                <textarea rows={3} placeholder="O que a pessoa vai aprender neste módulo" value={editingTraining.description} onChange={e => setEditingTraining({ ...editingTraining, description: e.target.value })} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"/>
+              </div>
+              <div>
+                <label className="text-xs text-text-muted mb-1 flex items-center gap-1.5"><Video className="w-3.5 h-3.5"/> Link do vídeo (YouTube, Drive, etc.)</label>
+                <input type="url" placeholder="https://..." value={editingTraining.videoUrl} onChange={e => setEditingTraining({ ...editingTraining, videoUrl: e.target.value })} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"/>
+              </div>
+              <div>
+                <label className="text-xs text-text-muted mb-1 flex items-center gap-1.5"><ImageIcon className="w-3.5 h-3.5"/> Foto de apoio</label>
+                {editingTraining.imageUrl && <img src={editingTraining.imageUrl} alt="Prévia" className="w-full max-h-40 object-cover rounded-md border border-white/10 mb-2"/>}
+                <input type="file" accept="image/*" onChange={handleTrainingImageUpload} className="w-full text-xs text-text-muted file:mr-3 file:py-2 file:px-3 file:rounded-md file:border-0 file:bg-brand-primary/20 file:text-brand-primary file:text-xs file:font-bold"/>
+              </div>
+              <div>
+                <label className="text-xs text-text-muted mb-1 flex items-center gap-1.5"><LinkIcon className="w-3.5 h-3.5"/> Link de material de apoio</label>
+                <input type="url" placeholder="https://..." value={editingTraining.linkUrl} onChange={e => setEditingTraining({ ...editingTraining, linkUrl: e.target.value })} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"/>
+              </div>
+              <button type="submit" disabled={savingTraining} className="w-full bg-brand-primary text-white py-2.5 rounded-md font-bold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 disabled:opacity-50 flex items-center justify-center gap-2">
+                {savingTraining ? <Loader2 className="w-4 h-4 animate-spin"/> : null} Salvar Treinamento
+              </button>
+            </form>
+          </div>
+        </div>
       )}
 
       {/* ── MODAL DE CONFIRMAÇÃO DE CANCELAMENTO DE ÁREA (sem window.confirm) */}

@@ -178,7 +178,14 @@ const publicationSchema = z.object({ content: z.string().min(1), imageUrl: z.str
 const eventSchema = z.object({ title: z.string().min(1), date: z.string().min(1), location: z.string().optional(), type: z.string().optional(), recurrence: z.enum(['NONE', 'WEEKLY', 'MONTHLY']).optional() });
 const announcementSchema = z.object({ title: z.string().min(1), content: z.string().min(1), type: z.string().optional() });
 const areaSchema = z.object({ name: z.string().min(1), description: z.string().optional().nullable(), leaderId: z.string().min(1), icon: z.string().optional() });
-const positionSchema = z.object({ name: z.string().min(1).max(60) });
+const positionSchema = z.object({ name: z.string().min(1).max(60), requiredTrainingId: z.string().optional().nullable() });
+const trainingSchemaArea = z.object({
+  title: z.string().min(1).max(100),
+  description: z.string().max(2000).optional().nullable(),
+  videoUrl: z.string().max(2000).optional().nullable(),
+  imageUrl: z.string().max(5_000_000).optional().nullable(),
+  linkUrl: z.string().max(2000).optional().nullable(),
+});
 const availabilitySchema = z.object({ weekday: z.number().int().min(0).max(6), period: z.enum(['MANHA', 'TARDE', 'NOITE']) });
 const linkSchema = z.object({
   name: z.string().min(1), day: z.string().min(1), time: z.string().min(1),
@@ -712,6 +719,14 @@ app.post('/api/areas/:id/shifts', validate(shiftSchema), h(async (req, res) => {
   if (area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode criar escalas.' });
   const when = new Date(req.body.date);
   if (isNaN(when.getTime())) return res.status(400).json({ error: 'Data inválida.' });
+  // Se a posição exige treinamento, o voluntário escolhido precisa já ter concluído
+  if (req.body.positionId && req.body.volunteerId) {
+    const position = await prisma.areaPosition.findUnique({ where: { id: req.body.positionId }, include: { requiredTraining: true } });
+    if (position?.requiredTrainingId) {
+      const done = await prisma.areaTrainingCompletion.findUnique({ where: { trainingId_userId: { trainingId: position.requiredTrainingId, userId: req.body.volunteerId } } });
+      if (!done) return res.status(400).json({ error: `Este voluntário ainda não concluiu o treinamento "${position.requiredTraining?.title}", exigido para a posição "${position.name}".` });
+    }
+  }
   const shift = await prisma.shift.create({ data: { areaId: area.id, department: area.name, date: when, volunteerId: req.body.volunteerId || null, positionId: req.body.positionId || null, status: 'Pendente' }, include: { user: { select: userPublic }, position: true } });
   if (req.body.volunteerId) notify(req.body.volunteerId, 'INFO', 'Você foi escalado', `Nova escala em "${area.name}" para ${new Date(req.body.date).toLocaleDateString('pt-BR')}. Confirme sua presença!`, area.id, 'voluntarios:escala');
   res.status(201).json(shift);
@@ -721,16 +736,23 @@ app.post('/api/areas/:id/shifts', validate(shiftSchema), h(async (req, res) => {
 app.get('/api/areas/:id/shifts', h(async (req, res) => res.json(await prisma.shift.findMany({ where: { areaId: pid(req) }, include: { user: { select: userPublic }, position: true }, orderBy: { date: 'asc' } }))));
 
 // --- POSIÇÕES DA ÁREA (ex.: Balcão, Forno, Barista) — criadas só pelo líder/staff ---
-app.get('/api/areas/:id/positions', h(async (req, res) => res.json(await prisma.areaPosition.findMany({ where: { areaId: pid(req) }, orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] }))));
+app.get('/api/areas/:id/positions', h(async (req, res) => res.json(await prisma.areaPosition.findMany({ where: { areaId: pid(req) }, include: { requiredTraining: true }, orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] }))));
 app.post('/api/areas/:id/positions', validate(positionSchema), h(async (req, res) => {
   const area = await prisma.area.findUnique({ where: { id: pid(req) } });
   if (!area) return res.status(404).json({ error: 'Área não encontrada.' });
   if (area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode criar posições.' });
   const count = await prisma.areaPosition.count({ where: { areaId: area.id } });
   try {
-    const position = await prisma.areaPosition.create({ data: { areaId: area.id, name: req.body.name, order: count } });
+    const position = await prisma.areaPosition.create({ data: { areaId: area.id, name: req.body.name, order: count, requiredTrainingId: req.body.requiredTrainingId || null }, include: { requiredTraining: true } });
     res.status(201).json(position);
   } catch { res.status(409).json({ error: 'Já existe uma posição com esse nome nesta área.' }); }
+}));
+app.put('/api/areas/positions/:id', validate(positionSchema), h(async (req, res) => {
+  const position = await prisma.areaPosition.findUnique({ where: { id: pid(req) }, include: { area: true } });
+  if (!position) return res.status(404).json({ error: 'Posição não encontrada.' });
+  if (position.area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode editar posições.' });
+  const updated = await prisma.areaPosition.update({ where: { id: pid(req) }, data: { name: req.body.name, requiredTrainingId: req.body.requiredTrainingId || null }, include: { requiredTraining: true } });
+  res.json(updated);
 }));
 app.delete('/api/areas/positions/:id', h(async (req, res) => {
   const position = await prisma.areaPosition.findUnique({ where: { id: pid(req) }, include: { area: true } });
@@ -738,6 +760,63 @@ app.delete('/api/areas/positions/:id', h(async (req, res) => {
   if (position.area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode remover posições.' });
   await prisma.areaPosition.delete({ where: { id: pid(req) } });
   res.json({ message: 'Removido' });
+}));
+
+// --- TREINAMENTOS DA ÁREA (módulos: vídeo, foto, link) — criados só pelo líder/staff ---
+app.get('/api/areas/:id/trainings', h(async (req, res) => {
+  const areaId = pid(req);
+  const [trainings, myCompletions] = await Promise.all([
+    prisma.areaTraining.findMany({ where: { areaId }, orderBy: [{ order: 'asc' }, { createdAt: 'asc' }] }),
+    prisma.areaTrainingCompletion.findMany({ where: { userId: req.user!.id, training: { areaId } }, select: { trainingId: true } }),
+  ]);
+  const doneIds = new Set(myCompletions.map(c => c.trainingId));
+  res.json(trainings.map(t => ({ ...t, completedByMe: doneIds.has(t.id) })));
+}));
+app.post('/api/areas/:id/trainings', validate(trainingSchemaArea), h(async (req, res) => {
+  const area = await prisma.area.findUnique({ where: { id: pid(req) } });
+  if (!area) return res.status(404).json({ error: 'Área não encontrada.' });
+  if (area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode criar treinamentos.' });
+  const count = await prisma.areaTraining.count({ where: { areaId: area.id } });
+  const training = await prisma.areaTraining.create({ data: { areaId: area.id, order: count, ...req.body } });
+  res.status(201).json({ ...training, completedByMe: false });
+}));
+app.put('/api/areas/trainings/:id', validate(trainingSchemaArea), h(async (req, res) => {
+  const training = await prisma.areaTraining.findUnique({ where: { id: pid(req) }, include: { area: true } });
+  if (!training) return res.status(404).json({ error: 'Treinamento não encontrado.' });
+  if (training.area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode editar treinamentos.' });
+  const updated = await prisma.areaTraining.update({ where: { id: pid(req) }, data: req.body });
+  res.json(updated);
+}));
+app.delete('/api/areas/trainings/:id', h(async (req, res) => {
+  const training = await prisma.areaTraining.findUnique({ where: { id: pid(req) }, include: { area: true } });
+  if (!training) return res.status(404).json({ error: 'Treinamento não encontrado.' });
+  if (training.area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode remover treinamentos.' });
+  await prisma.areaTraining.delete({ where: { id: pid(req) } });
+  res.json({ message: 'Removido' });
+}));
+// Concluir um treinamento (voluntário aprovado da área) — idempotente, credita pontos uma vez
+app.post('/api/areas/trainings/:id/complete', h(async (req, res) => {
+  const training = await prisma.areaTraining.findUnique({ where: { id: pid(req) } });
+  if (!training) return res.status(404).json({ error: 'Treinamento não encontrado.' });
+  const isLeaderOrStaff = training.areaId ? (await prisma.area.findUnique({ where: { id: training.areaId } }))?.leaderId === req.user!.id || await hasModuleAccess(req, 'areas') : false;
+  if (!isLeaderOrStaff) {
+    const part = await prisma.areaParticipation.findUnique({ where: { userId_areaId: { userId: req.user!.id, areaId: training.areaId } } });
+    if (!part || (part.status !== 'APROVADO' && part.status !== 'SAIDA_PENDENTE')) return res.status(403).json({ error: 'Apenas voluntários aprovados podem concluir treinamentos.' });
+  }
+  try {
+    await prisma.areaTrainingCompletion.create({ data: { trainingId: training.id, userId: req.user!.id } });
+  } catch { /* já concluído — idempotente */ }
+  const award = await awardPoints(req.user!.id, 'TRAINING_COMPLETION', training.id, 50);
+  const user = await prisma.user.findUnique({ where: { id: req.user!.id }, select: userPublic });
+  res.json({ awarded: award.awarded, already: award.already, points: user?.points });
+}));
+// Quem já concluiu um treinamento (líder/staff — para saber quem pode ser escalado numa posição)
+app.get('/api/areas/trainings/:id/completions', h(async (req, res) => {
+  const training = await prisma.areaTraining.findUnique({ where: { id: pid(req) }, include: { area: true } });
+  if (!training) return res.status(404).json({ error: 'Treinamento não encontrado.' });
+  if (training.area.leaderId !== req.user!.id && !(await hasModuleAccess(req, 'areas'))) return res.status(403).json({ error: 'Apenas o líder da área pode ver quem concluiu.' });
+  const rows = await prisma.areaTrainingCompletion.findMany({ where: { trainingId: pid(req) }, select: { userId: true } });
+  res.json(rows.map(r => r.userId));
 }));
 
 // --- DISPONIBILIDADE SEMANAL (dia + período) do voluntário para uma área ---
@@ -799,11 +878,15 @@ app.patch('/api/shifts/:id/confirm', h(async (req, res) => {
 }));
 // Aceitar uma vaga em aberto (volunteerId null) — some da lista de "abertas" assim que alguém aceita
 app.patch('/api/shifts/:id/claim', h(async (req, res) => {
-  const shift = await prisma.shift.findUnique({ where: { id: pid(req) } });
+  const shift = await prisma.shift.findUnique({ where: { id: pid(req) }, include: { position: { include: { requiredTraining: true } } } });
   if (!shift) return res.status(404).json({ error: 'Escala não encontrada.' });
   if (shift.areaId) {
     const part = await prisma.areaParticipation.findUnique({ where: { userId_areaId: { userId: req.user!.id, areaId: shift.areaId } } });
     if (!part || (part.status !== 'APROVADO' && part.status !== 'SAIDA_PENDENTE')) return res.status(403).json({ error: 'Apenas voluntários aprovados da área podem aceitar esta vaga.' });
+  }
+  if (shift.position?.requiredTrainingId) {
+    const done = await prisma.areaTrainingCompletion.findUnique({ where: { trainingId_userId: { trainingId: shift.position.requiredTrainingId, userId: req.user!.id } } });
+    if (!done) return res.status(400).json({ error: `Você precisa concluir o treinamento "${shift.position.requiredTraining?.title}" antes de aceitar esta vaga.` });
   }
   const result = await prisma.shift.updateMany({ where: { id: pid(req), volunteerId: null }, data: { volunteerId: req.user!.id, status: 'Confirmado' } });
   if (result.count === 0) return res.status(409).json({ error: 'Esta vaga já foi ocupada.' });

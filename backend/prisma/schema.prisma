@@ -44,6 +44,7 @@ model User {
   areaMessages        AreaMessage[]
   eventParticipations EventParticipation[]
   availabilities      Availability[]
+  trainingCompletions AreaTrainingCompletion[]
 
   ledLinks Link[] @relation("LinkLeader")
   ledAreas Area[] @relation("AreaLeader")
@@ -356,20 +357,53 @@ model Area {
   messages       AreaMessage[]
   positions      AreaPosition[]
   availabilities Availability[]
+  trainings      AreaTraining[]
 }
 
 // Posições dentro de uma área (ex.: Keola Coffee -> Balcão, Forno, Barista). Só o líder cria.
 model AreaPosition {
-  id        String   @id @default(uuid())
-  name      String
-  order     Int      @default(0)
-  areaId    String
-  area      Area     @relation(fields: [areaId], references: [id], onDelete: Cascade)
-  createdAt DateTime @default(now())
+  id                 String        @id @default(uuid())
+  name               String
+  order              Int           @default(0)
+  areaId             String
+  area               Area          @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  requiredTrainingId String?
+  requiredTraining   AreaTraining? @relation(fields: [requiredTrainingId], references: [id], onDelete: SetNull)
+  createdAt          DateTime      @default(now())
 
   shifts Shift[]
 
   @@unique([areaId, name])
+}
+
+// Treinamento/curso de uma área (módulo): vídeo, foto e/ou link, exibido aos voluntários.
+// Uma posição pode exigir a conclusão de um treinamento antes de a pessoa ser escalada nela.
+model AreaTraining {
+  id          String   @id @default(uuid())
+  areaId      String
+  area        Area     @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  videoUrl    String?
+  imageUrl    String?
+  linkUrl     String?
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  completions AreaTrainingCompletion[]
+  positions   AreaPosition[]
+}
+
+model AreaTrainingCompletion {
+  id          String       @id @default(uuid())
+  trainingId  String
+  training    AreaTraining @relation(fields: [trainingId], references: [id], onDelete: Cascade)
+  userId      String
+  user        User         @relation(fields: [userId], references: [id])
+  completedAt DateTime     @default(now())
+
+  @@unique([trainingId, userId])
 }
 
 // Disponibilidade semanal do voluntário para uma área (dia da semana + período).
