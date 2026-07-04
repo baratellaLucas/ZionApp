@@ -64,9 +64,9 @@ Este é um projeto de **Atividade de Extensão** do curso de Análise e Desenvol
 
 <img src="docs/screenshots/inicio.png" width="230" alt="Início — engajamento e plano bíblico" />&nbsp;
 <img src="docs/screenshots/loja.png" width="230" alt="Loja de recompensas" />&nbsp;
-<img src="docs/screenshots/voluntarios.jpeg" width="230" alt="Voluntariado" />
+<img src="docs/screenshots/voluntarios.png" width="230" alt="Voluntariado" />
 
-<img src="docs/screenshots/links.jpeg" width="230" alt="Links — pequenos grupos" />&nbsp;
+<img src="docs/screenshots/links.png" width="230" alt="Links — pequenos grupos" />&nbsp;
 <img src="docs/screenshots/admin.png" width="230" alt="Painel administrativo" />
 
 <sub>Início · Loja · Voluntários · Links · Admin</sub>
