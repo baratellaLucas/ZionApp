@@ -48,20 +48,20 @@ const ALL_ROLES = ['MEMBRO', 'VOLUNTARIO', 'AUXILIAR_LIDER', 'LIDER', 'PASTOR', 
 const PERM_CATALOG: { key: string; label: string; description: string; category: string; defaultMinRank: number }[] = [
   // Obs.: resgate na Loja é livre (qualquer usuário com pontos) e a validação de voucher é
   // controlada pela flag "Atendente" por usuário (Admin > Membros), não pela matriz de cargos.
-  { key: 'EVENT_CHECKIN_CODE',  label: 'Gerar QR de check-in de eventos', description: 'Ver o código/QR de check-in para exibir no local do evento.',        category: 'Eventos',       defaultMinRank: ROLE_RANK.ADMIN },
-  { key: 'EVENT_MANAGE',        label: 'Criar/editar/excluir eventos',    description: 'Gerenciar a agenda de eventos do app.',                              category: 'Eventos',       defaultMinRank: ROLE_RANK.ADMIN },
+  { key: 'EVENT_CHECKIN_CODE',  label: 'Gerar QR de check-in de eventos', description: 'Ver o código/QR de check-in para exibir no local do evento.',        category: 'Eventos',       defaultMinRank: ROLE_RANK.PASTOR },
+  { key: 'EVENT_MANAGE',        label: 'Criar/editar/excluir eventos',    description: 'Gerenciar a agenda de eventos do app.',                              category: 'Eventos',       defaultMinRank: ROLE_RANK.PASTOR },
   { key: 'GROUP_CREATE',        label: 'Criar grupos de leitura',         description: 'Criar novos grupos de competição do Plano Bíblico.',                 category: 'Plano Bíblico', defaultMinRank: ROLE_RANK.MEMBRO },
-  { key: 'READING_PLAN_MANAGE', label: 'Editar o Plano Bíblico',          description: 'Criar/editar planos de leitura anuais (Admin > Plano Bíblico).',      category: 'Plano Bíblico', defaultMinRank: ROLE_RANK.ADMIN },
-  { key: 'READING_ADJUST',      label: 'Ajustar contagem de leitura',     description: 'Aumentar/diminuir manualmente os dias de leitura de um membro.',     category: 'Plano Bíblico', defaultMinRank: ROLE_RANK.ADMIN },
-  { key: 'ANNOUNCEMENT_MANAGE', label: 'Gerenciar comunicados globais',   description: 'Criar/editar/excluir avisos do Mural Geral.',                        category: 'Comunicação',   defaultMinRank: ROLE_RANK.ADMIN },
-  { key: 'PUBLICATION_MANAGE',  label: 'Moderar publicações do mural',    description: 'Excluir publicações de qualquer pessoa no mural do Início, além das próprias.', category: 'Comunicação',   defaultMinRank: ROLE_RANK.ADMIN },
-  { key: 'POINT_RULE_MANAGE',   label: 'Editar regras de pontuação',      description: 'Ajustar quantos Zion Points cada ação concede (Gamificação).',       category: 'Gamificação',   defaultMinRank: ROLE_RANK.ADMIN },
-  { key: 'BUG_REPORT_MANAGE',   label: 'Ver e resolver bugs reportados',  description: 'Acessar a lista de bugs/sugestões enviados pelos membros.',          category: 'Sistema',       defaultMinRank: ROLE_RANK.ADMIN },
+  { key: 'READING_PLAN_MANAGE', label: 'Editar o Plano Bíblico',          description: 'Criar/editar planos de leitura anuais (Admin > Plano Bíblico).',      category: 'Plano Bíblico', defaultMinRank: ROLE_RANK.PASTOR },
+  { key: 'READING_ADJUST',      label: 'Ajustar contagem de leitura',     description: 'Aumentar/diminuir manualmente os dias de leitura de um membro.',     category: 'Plano Bíblico', defaultMinRank: ROLE_RANK.PASTOR },
+  { key: 'ANNOUNCEMENT_MANAGE', label: 'Gerenciar comunicados globais',   description: 'Criar/editar/excluir avisos do Mural Geral.',                        category: 'Comunicação',   defaultMinRank: ROLE_RANK.PASTOR },
+  { key: 'PUBLICATION_MANAGE',  label: 'Moderar publicações do mural',    description: 'Excluir publicações de qualquer pessoa no mural do Início, além das próprias.', category: 'Comunicação',   defaultMinRank: ROLE_RANK.PASTOR },
+  { key: 'POINT_RULE_MANAGE',   label: 'Editar regras de pontuação',      description: 'Ajustar quantos Zion Points cada ação concede (Gamificação).',       category: 'Gamificação',   defaultMinRank: ROLE_RANK.PASTOR },
+  { key: 'BUG_REPORT_MANAGE',   label: 'Ver e resolver bugs reportados',  description: 'Acessar a lista de bugs/sugestões enviados pelos membros.',          category: 'Sistema',       defaultMinRank: ROLE_RANK.PASTOR },
 ];
 
 const hasPerm = async (role: string | undefined, permKey: string): Promise<boolean> => {
   const r = role || 'MEMBRO';
-  if (r === 'ADMIN' || r === 'PASTOR') return true; // piso: admin e pastor nunca perdem acesso
+  if (r === 'ADMIN') return true; // piso: admin nunca perde acesso (anti-lockout). Pastor agora é configurável.
   const saved = await prisma.rolePermission.findUnique({ where: { role_permKey: { role: r, permKey } } });
   if (saved) return saved.allowed;
   const def = PERM_CATALOG.find(p => p.key === permKey);
@@ -501,7 +501,7 @@ app.get('/api/permissions', adminOnly, h(async (req, res) => {
   const permissions = PERM_CATALOG.map(p => {
     const matrix: Record<string, boolean> = {};
     for (const role of ALL_ROLES) {
-      if (role === 'ADMIN' || role === 'PASTOR') { matrix[role] = true; continue; } // admin/pastor sempre têm tudo
+      if (role === 'ADMIN') { matrix[role] = true; continue; } // admin sempre tem tudo (anti-lockout)
       const row = saved.find(s => s.role === role && s.permKey === p.key);
       matrix[role] = row ? row.allowed : roleRank(role) >= p.defaultMinRank;
     }
@@ -512,7 +512,7 @@ app.get('/api/permissions', adminOnly, h(async (req, res) => {
 
 const permissionsSchema = z.object({
   changes: z.array(z.object({
-    role: z.enum(['MEMBRO', 'VOLUNTARIO', 'AUXILIAR_LIDER', 'LIDER']), // ADMIN não é editável (anti-lockout)
+    role: z.enum(['MEMBRO', 'VOLUNTARIO', 'AUXILIAR_LIDER', 'LIDER', 'PASTOR']), // ADMIN não é editável (anti-lockout)
     permKey: z.string().min(1),
     allowed: z.boolean(),
   })).min(1).max(100),
@@ -1103,7 +1103,7 @@ app.get('/api/reading/ranking', h(async (req, res) => {
 
 // --- ADMIN: AJUSTAR CONTAGEM DE LEITURA DE UM MEMBRO (Admin > Plano Bíblico) ---
 app.get('/api/admin/reading/:userId', requirePerm('READING_ADJUST'), h(async (req, res) => {
-  const userId = pid(req);
+  const userId = String(req.params.userId);
   const [user, count] = await Promise.all([
     prisma.user.findUnique({ where: { id: userId }, select: userPublic }),
     prisma.readingLog.count({ where: { userId } }),

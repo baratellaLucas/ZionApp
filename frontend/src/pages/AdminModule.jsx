@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { apiFetch } from '../api';
 import { compressImage, fileToDataUrl } from '../utils/image';
 import { AREA_ICON_CATALOG, getAreaIconComponent } from '../utils/areaIcons';
-import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Users, Eye, Briefcase, Gift, Ticket, Tag, CheckCircle, Zap, BarChart3, BookOpen, Award, QrCode, Bug, Trophy, Flame, BookMarked, Music } from 'lucide-react';
+import { ShieldCheck, Plus, Trash2, Edit3, Save, X, Calendar, Megaphone, Link as LinkIcon, MessageSquare, AlertTriangle, Users, Eye, Briefcase, Gift, Ticket, Tag, CheckCircle, Zap, BarChart3, BookOpen, Award, QrCode, Bug, Trophy, Flame, BookMarked, Music, Loader2 } from 'lucide-react';
 
 // Locais pré-definidos para eventos (menu de seleção); "Outro" libera um campo de texto livre.
 const EVENT_LOCATIONS = ['Campus Zion RP', 'Templo Principal', 'Auditório', 'Sala de Reuniões', 'Keola Coffee', 'Área Externa', 'Online', 'A definir'];
@@ -76,7 +76,8 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
   const [permData, setPermData] = useState(null); // { roles, permissions }
   const [permSaving, setPermSaving] = useState(false);
   const ROLE_LABEL = { MEMBRO: 'Membro', VOLUNTARIO: 'Voluntário', AUXILIAR_LIDER: 'Aux. Líder', LIDER: 'Líder', PASTOR: 'Pastor', ADMIN: 'Admin' };
-  const LOCKED_ROLE = (role) => role === 'ADMIN' || role === 'PASTOR'; // colunas de acesso total na matriz
+  const LOCKED_ROLE = (role) => role === 'ADMIN'; // única coluna de acesso total (anti-lockout) na matriz de permissões
+  const isStaffRole = (role) => role === 'ADMIN' || role === 'PASTOR'; // quem acessa o painel Admin
 
   const loadPermissions = async () => {
     try {
@@ -652,8 +653,6 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                   </table>
                 </div>
               )}
-
-              <p className="text-[11px] text-text-muted">O resgate na Loja é livre para todos os usuários. Já a validação/baixa de vouchers é liberada individualmente pela flag "Atendente" na aba Membros.</p>
             </div>
           )}
 
@@ -1049,36 +1048,6 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                 </button>
               </div>
 
-              <div className="bg-surface-card border border-orange-500/20 rounded-default p-5 shadow-level-2">
-                <h3 className="text-base font-bold text-text-primary flex items-center gap-2 mb-1"><Flame className="w-5 h-5 text-orange-400"/> Ajustar Contagem de Leitura</h3>
-                <p className="text-xs text-text-muted mb-4">Aumente ou diminua os dias de leitura de um membro — atualiza a sequência, o ranking e os pontos, salvando direto no banco.</p>
-                <select value={adjustUserId} onChange={e => loadAdjustInfo(e.target.value)} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 mb-3">
-                  <option value="">Selecione um membro...</option>
-                  {allUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
-                </select>
-                {loadingAdjustInfo ? (
-                  <div className="flex justify-center py-4"><div className="w-6 h-6 border-2 border-brand-primary border-t-transparent rounded-full animate-spin"></div></div>
-                ) : adjustInfo && (
-                  <div className="bg-surface-dark border border-white/10 rounded-md p-4 space-y-3">
-                    <div className="flex justify-between text-sm">
-                      <span className="text-text-muted">Sequência atual</span>
-                      <span className="text-white font-bold flex items-center gap-1"><Flame className="w-4 h-4 text-orange-400"/> {adjustInfo.count} dias</span>
-                    </div>
-                    <div className="flex justify-between text-sm">
-                      <span className="text-text-muted">Pontos atuais</span>
-                      <span className="text-white font-bold">{adjustInfo.user.points}</span>
-                    </div>
-                    <div className="flex items-center gap-2 pt-2 border-t border-white/10">
-                      <label className="text-xs text-text-muted shrink-0">Nova contagem</label>
-                      <input type="number" min="0" max="400" value={adjustNewCount} onChange={e => setAdjustNewCount(e.target.value)} className="flex-1 bg-surface-card border border-white/10 rounded-md px-3 py-2 text-white text-center font-bold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"/>
-                      <button onClick={handleSaveAdjust} disabled={savingAdjust} className="bg-orange-500 hover:bg-orange-400 text-white px-4 py-2 rounded-md font-bold text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 disabled:opacity-50 flex items-center gap-2 shrink-0">
-                        {savingAdjust ? <Loader2 className="w-4 h-4 animate-spin"/> : <Save className="w-4 h-4"/>} Salvar
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-
               {readingPlans.length === 0 ? (
                 <div className="text-center text-text-muted py-8 bg-surface-card rounded-default border border-dashed border-white/10">Nenhum plano cadastrado ainda.</div>
               ) : (
@@ -1107,6 +1076,38 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                   })}
                 </div>
               )}
+
+              <div className="border-t border-white/10 pt-6">
+                <div className="bg-surface-card border border-orange-500/20 rounded-default p-5 shadow-level-2">
+                  <h3 className="text-base font-bold text-text-primary flex items-center gap-2 mb-1"><Flame className="w-5 h-5 text-orange-400"/> Ajustar Contagem de Leitura</h3>
+                  <p className="text-xs text-text-muted mb-4">Aumente ou diminua os dias de leitura de um membro — atualiza a sequência, o ranking e os pontos, salvando direto no banco.</p>
+                  <select value={adjustUserId} onChange={e => loadAdjustInfo(e.target.value)} className="w-full bg-surface-dark border border-white/10 rounded-md px-3 py-2 text-white outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 mb-3">
+                    <option value="">Selecione um membro...</option>
+                    {allUsers.map(u => <option key={u.id} value={u.id}>{u.name}</option>)}
+                  </select>
+                  {loadingAdjustInfo ? (
+                    <div className="flex justify-center py-4"><div className="w-6 h-6 border-2 border-brand-primary border-t-transparent rounded-full animate-spin"></div></div>
+                  ) : adjustInfo && (
+                    <div className="bg-surface-dark border border-white/10 rounded-md p-4 space-y-3">
+                      <div className="flex justify-between text-sm">
+                        <span className="text-text-muted">Sequência atual</span>
+                        <span className="text-white font-bold flex items-center gap-1"><Flame className="w-4 h-4 text-orange-400"/> {adjustInfo.count} dias</span>
+                      </div>
+                      <div className="flex justify-between text-sm">
+                        <span className="text-text-muted">Pontos atuais</span>
+                        <span className="text-white font-bold">{adjustInfo.user.points}</span>
+                      </div>
+                      <div className="flex items-center gap-2 pt-2 border-t border-white/10">
+                        <label className="text-xs text-text-muted shrink-0">Nova contagem</label>
+                        <input type="number" min="0" max="400" value={adjustNewCount} onChange={e => setAdjustNewCount(e.target.value)} className="flex-1 bg-surface-card border border-white/10 rounded-md px-3 py-2 text-white text-center font-bold outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60"/>
+                        <button onClick={handleSaveAdjust} disabled={savingAdjust} className="bg-orange-500 hover:bg-orange-400 text-white px-4 py-2 rounded-md font-bold text-sm outline-none focus-visible:ring-2 focus-visible:ring-brand-primary/60 disabled:opacity-50 flex items-center gap-2 shrink-0">
+                          {savingAdjust ? <Loader2 className="w-4 h-4 animate-spin"/> : <Save className="w-4 h-4"/>} Salvar
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              </div>
 
               {editingPlan && (
                 <div className="fixed inset-0 z-[110] flex items-center justify-center p-4 bg-black/60 animate-in fade-in duration-200" onClick={() => !savingPlan && setEditingPlan(null)}>
@@ -1408,7 +1409,7 @@ const AdminModule = ({ user, showNotification, handleSimulateUser }) => {
                        >
                          <QrCode className="w-3.5 h-3.5"/> {usr.canRedeem ? 'Atendente ✓' : 'Atendente'}
                        </button>
-                       {LOCKED_ROLE(user.role) && (
+                       {isStaffRole(user.role) && (
                        <div className="flex items-center gap-1 bg-surface-dark border border-white/10 rounded-md p-1" title="Acesso administrativo por módulo">
                          <button
                            onClick={() => handleModuleAccessToggle(usr.id, 'links', !usr.canManageLinks)}

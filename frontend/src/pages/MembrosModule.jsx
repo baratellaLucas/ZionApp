@@ -242,7 +242,14 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
 
   return (
     <div className="space-y-6">
-      
+
+      {futureEvents.some(o => o.isNow) && (
+        <div className="flex items-center gap-2 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 rounded-default px-4 py-2.5 text-sm font-bold animate-pulse">
+          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0"></span>
+          Acontecendo agora: {futureEvents.filter(o => o.isNow).map(o => o.title).join(', ')}
+        </div>
+      )}
+
       {generalAnnouncement && (
         <div className="bg-surface-card bg-gradient-to-r from-brand-secondary/20 to-brand-primary/20 border border-brand-primary/30 p-4 rounded-default shadow-sm mb-6">
           <div className="flex items-start gap-3">
@@ -318,13 +325,6 @@ const MembrosModule = ({ user, setUser, showNotification, intent, onIntentHandle
           )}
         </div>
       </div>
-
-      {futureEvents.some(o => o.isNow) && (
-        <div className="flex items-center gap-2 bg-emerald-500/15 border border-emerald-500/40 text-emerald-300 rounded-default px-4 py-2.5 text-sm font-bold animate-pulse">
-          <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 shrink-0"></span>
-          Acontecendo agora: {futureEvents.filter(o => o.isNow).map(o => o.title).join(', ')}
-        </div>
-      )}
 
       <div className="bg-surface-card p-4 rounded-default border border-white/5 shadow-level-2">
         <div className="flex justify-between items-center mb-4">
